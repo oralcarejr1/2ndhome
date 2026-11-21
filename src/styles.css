@@ -2604,6 +2604,16 @@ details.more[open] > summary {
 }
 
 /* product editor */
+.product-link-form {
+  display: grid;
+  gap: 7px;
+  margin-bottom: 12px;
+}
+.product-link-form > label { font-size: 12px; font-weight: 600; }
+.product-link-row { display: flex; gap: 6px; align-items: center; }
+.product-link-row .inp { flex: 1; min-width: 0; }
+.product-link-row button { flex-shrink: 0; white-space: nowrap; }
+.product-link-form .note { margin: 0; }
 .pe-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2923,3 +2933,4 @@ textarea:focus-visible {
     width: 40px;
   }
 }
+

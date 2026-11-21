@@ -89,7 +89,7 @@ function Studio() {
   const [splitMood, setSplitMood] = useState(false);
   const [editPlan, setEditPlan] = useState(false);
   const [compare, setCompare] = useState(false);
-  const [editor, setEditor] = useState<{ base?: Product } | null>(null);
+  const [editor, setEditor] = useState<{ base?: Product; importUrl?: string } | null>(null);
   const [help, setHelp] = useState(false);
   const [mtab, setMtab] = useState<'left' | 'right' | 'none'>('none');
   const [toastOn, setToastOn] = useState(false);
@@ -141,7 +141,7 @@ function Studio() {
               ))}
             </div>
             <div className="left-panel-content">
-              {leftTab === 'catalog' && <CatalogPanel onCustom={(base) => setEditor({ base })} />}
+              {leftTab === 'catalog' && <CatalogPanel onCustom={(base, importUrl) => setEditor({ base, importUrl })} />}
               {leftTab === 'placed' && <LayoutListPanel />}
               {leftTab === 'human' && <HumanPanel />}
               {leftTab === 'versions' && <VersionsPanel onCompare={() => setCompare(true)} />}
@@ -199,7 +199,7 @@ function Studio() {
           </button>
         </nav>
       )}
-      {editor && <ProductEditor base={editor.base} onClose={() => setEditor(null)} />}
+      {editor && <ProductEditor base={editor.base} importUrl={editor.importUrl} onClose={() => setEditor(null)} />}
       {compare && <CompareModal onClose={() => setCompare(false)} />}
       {help && <Help onClose={() => setHelp(false)} />}
       <ShotModal />
@@ -581,3 +581,4 @@ function useKeys() {
 }
 
 export { useMemo };
+

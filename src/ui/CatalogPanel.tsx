@@ -4,6 +4,7 @@ import { CATEGORIES } from '../catalog/categories';
 import { PRODUCTS, productSearchUrl } from '../catalog/products';
 import { fmtWon } from '../lib/geometry';
 import { getThumb } from '../lib/thumbs';
+import { normalizeProductUrl } from '../lib/productImport';
 import { resolveMats } from '../models';
 import { useStore } from '../store/store';
 import type { CategoryId, Product } from '../types';
@@ -57,7 +58,7 @@ type Filter = CategoryId | 'all' | 'star' | 'mine' | 'builtin' | `tag:${string}`
 /** Shortlist tags carried by a home's own products (e.g. "○○ 후보") become catalog chips. */
 const isListTag = (t: string) => t.endsWith('후보');
 
-export function CatalogPanel({ onCustom }: { onCustom: (base?: Product) => void }) {
+export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUrl?: string) => void }) {
   const project = useStore((s) => s.project)!;
   const placing = useStore((s) => s.placing);
   const mutate = useStore((s) => s.mutate);
@@ -65,6 +66,8 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product) => void 
   const [q, setQ] = useState('');
   const [cat, setCat] = useState<Filter>('all');
   const [brand, setBrand] = useState('');
+  const [pageUrl, setPageUrl] = useState('');
+  const [urlError, setUrlError] = useState('');
   const all = useMemo(() => [...project.customProducts, ...PRODUCTS], [project.customProducts]);
   const brands = useMemo(() => Array.from(new Set(all.map((p) => p.brand))).sort((a, b) => a.localeCompare(b, 'ko')), [all]);
   const shortlist = project.shortlist;
@@ -101,6 +104,21 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product) => void 
   return (
     <div className="panel-scroll">
       <div className="panel-top-actions">
+        <form className="product-link-form" onSubmit={(e) => {
+          e.preventDefault();
+          try {
+            const url = normalizeProductUrl(pageUrl);
+            setUrlError('');
+            onCustom(undefined, url);
+          } catch { setUrlError('판매 페이지의 전체 주소(http 또는 https)를 입력하세요'); }
+        }}>
+          <label htmlFor="catalog-product-url">판매 페이지로 후보 추가</label>
+          <div className="product-link-row">
+            <input id="catalog-product-url" className="inp" type="url" required placeholder="https://판매 페이지 주소" value={pageUrl} onChange={(e) => { setPageUrl(e.target.value); setUrlError(''); }} />
+            <button className="btn-secondary" type="submit"><Plus size={14} /> 불러오기</button>
+          </div>
+          {urlError && <p className="note" role="alert">{urlError}</p>}
+        </form>
         <div className="search-row">
           <div className="search-box">
             <Search size={14} className="muted-icon" />
@@ -201,3 +219,4 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product) => void 
     </div>
   );
 }
+
