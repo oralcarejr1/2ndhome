@@ -104,6 +104,10 @@ interface State {
   newProject: (name: string, kind: 'blank' | 'copy') => void;
   deleteProject: (id: string) => void;
   importProject: (p: Project) => void;
+  /** Restore a backup over the existing project with the same id (on every device, via the server). */
+  replaceProject: (p: Project) => Promise<void>;
+  /** Save and upload pending edits now instead of after the usual short delay. */
+  syncNow: () => Promise<void>;
   upsertProduct: (p: Product) => void;
   setProfiles: (fn: (ps: PersonProfile[]) => void) => void;
   requestShot: () => void;
@@ -399,9 +403,10 @@ export const useStore = create<State>((set, get) => {
     if (typeof window === 'undefined') return;
     const onVis = () => {
       if (document.visibilityState === 'visible') void pullRemote(true);
-      else if (pushTimer) schedulePush(true); // leaving the tab: send pending edits now
+      else void get().syncNow(); // leaving the tab or closing the app: send pending edits now
     };
     document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('pagehide', () => void get().syncNow());
     window.addEventListener('focus', () => void pullRemote(true));
     window.addEventListener('online', () => {
       const p = get().project;
@@ -769,6 +774,30 @@ export const useStore = create<State>((set, get) => {
       registerProducts([q]);
       set({ project: withOwnProducts(q), selection: [], past: [], future: [] });
       persist();
+    },
+    replaceProject: async (p) => {
+      await flushLocal();
+      const q: Project = withOwnProducts({ ...p, updatedAt: Date.now() });
+      registerProducts([q]);
+      if (serverOn) {
+        // overwrite the server copy on purpose: build on its current version instead of merging
+        const etag = await srvStat(q.id);
+        if (etag) await setSync(q.id, { etag, dirty: true, base: null });
+      }
+      await localSaveProject(q);
+      try {
+        localStorage.setItem('2ndhome:last', q.id);
+      } catch {
+        /* ignore */
+      }
+      set({ project: q, selection: [], past: [], future: [], projectList: upsertList(get().projectList, q) });
+      persist();
+      await get().syncNow();
+    },
+    syncNow: async () => {
+      await flushLocal();
+      const p = get().project;
+      if (serverOn && p && peekSync(p.id)?.dirty) schedulePush(true);
     },
     upsertProduct: (prod) => {
       get().mutate((p) => {
