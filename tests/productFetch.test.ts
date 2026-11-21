@@ -168,6 +168,52 @@ describe('remote product page loading', () => {
     });
   });
 
+  it('reads an Ohouse goods record, sends size-chart slices to the AI and replaces estimated sizes', async () => {
+    process.env.GEMINI_API_KEY = 'test-gemini-key';
+    const goods = {
+      production: {
+        name: '할인가 159,900원/뮤카 회전 전신거울 수납 화장대 스툴포함',
+        brand: { name: '파로마 공식스토어' },
+        sellingPrice: 169900,
+        informationNoticeItems: { items: [{ displayName: '크기', content: '상세페이지 참조' }] },
+        description: '<img src="https://img.example/0120_spec.jpg">',
+      },
+      categories: [{ title: '가구' }, { title: '화장대·콘솔' }, { title: '콘솔' }],
+      seoOptionNames: ['블랙', '화이트'],
+    };
+    const data = { props: { pageProps: { dehydratedState: { queries: [{ queryKey: ['goods', 4169873], state: { data: goods } }] } } } };
+    serve(200, { 'content-type': 'text/html; charset=utf-8' }, `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify(data)}</script>`);
+    const sharp = (await import('sharp')).default;
+    const lines = Array.from({ length: 10 }, (_, i) => ({ input: { create: { width: 500, height: 3, channels: 3 as const, background: '#222' } }, left: 100, top: 40 + i * 60 }));
+    const chart = await sharp({ create: { width: 860, height: 700, channels: 3, background: '#fff' } }).composite(lines).jpeg().toBuffer();
+    serve(200, { 'content-type': 'image/jpeg' }, chart);
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [{ content: { parts: [{ text: JSON.stringify({ name: '뮤카 화장대', dims: { w: 44.5, d: 44.5, h: 160.5 }, features: { mirror: true } }) }] } }],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await readProductPage('https://store.ohou.se/goods/4169873?utm_source=externalsharing&channel=externalsharing');
+    expect(res).toMatchObject({
+      url: 'https://store.ohou.se/goods/4169873',
+      name: '뮤카 회전 전신거울 수납 화장대 스툴포함',
+      brand: '파로마',
+      price: 169900,
+      category: 'storage',
+      model: 'vanity',
+      params: { style: 'tower' },
+      dims: { w: 44.5, d: 44.5, h: 160.5 },
+      source: 'page+ai',
+    });
+    expect(res.dimsEstimated).toBeUndefined();
+    const aiBody = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(aiBody.contents[0].parts.filter((part: any) => part.inline_data?.mime_type === 'image/jpeg')).toHaveLength(1);
+    expect(aiBody.contents[0].parts[0].text).toContain('Store category: 가구 > 화장대·콘솔 > 콘솔');
+  });
+
   it('uses Gemini vision on detail images when HTML lacks dimensions and GEMINI_API_KEY is configured', async () => {
     process.env.GEMINI_API_KEY = 'test-gemini-key';
     serve(

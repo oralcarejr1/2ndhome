@@ -5,6 +5,7 @@ import {
   mergeImportedProducts,
   type InlineImage,
 } from './productAi.js';
+import { finalizeProduct } from './productFinalize.js';
 import { parseProductText } from './productText.js';
 
 const MAX_TEXT_CHARS = 40_000;
@@ -39,7 +40,7 @@ export async function importProductContent(
 
   if (!aiReady) {
     return {
-      ...deterministic,
+      ...finalizeProduct(deterministic, { extra: text.slice(0, 600) }),
       source: 'text',
       aiConfigured: false,
     };
@@ -61,7 +62,7 @@ export async function importProductContent(
 
   const merged = mergeImportedProducts(deterministic, aiResult, Boolean(image));
   return {
-    ...merged,
+    ...finalizeProduct({ ...merged, ...(aiResult?.features ? { features: aiResult.features } : {}) }, { extra: text.slice(0, 600) }),
     ...(input.url ? { url: input.url } : {}),
     source: image ? 'image+ai' : aiResult ? 'text+ai' : 'text',
     aiConfigured: true,

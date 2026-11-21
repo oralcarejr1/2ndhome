@@ -63,7 +63,7 @@ export function cleanTitleAndBrand(rawTitle?: string, rawBrand?: string): { name
   if (brand && MARKETPLACE_BRAND.test(brand)) brand = undefined;
 
   let name = rawTitle ? cleanText(rawTitle, 240) : undefined;
-  if (!name) return { brand };
+  if (!name) return { brand: brand ? cleanBrandName(brand) : undefined };
 
   name = name.replace(TITLE_SITE_SUFFIX, '').trim();
 
@@ -86,7 +86,43 @@ export function cleanTitleAndBrand(rawTitle?: string, rawBrand?: string): { name
     }
   }
 
+  name = stripPromoText(name);
+  if (brand) brand = cleanBrandName(brand);
+  if (name && brand && name.toLowerCase().startsWith(`${brand.toLowerCase()} `) && name.length > brand.length + 4) {
+    name = name.slice(brand.length).trim();
+  }
+
   return { name: name || undefined, brand };
+}
+
+const PROMO_WORD =
+  /(?:단독|특가|할인|쿠폰|증정|사은품|이벤트|무료\s*(?:배송|설치|내림|조립)|무배|당일|오늘\s*출발|빠른\s*배송|지정일|예약|한정|타임|비노출|혜택|적립|리뷰|최저가|BEST|SALE|HOT|NEW)/i;
+
+/** Removes marketplace promo noise anywhere in a product title. */
+export function stripPromoText(raw: string): string {
+  let s = raw;
+  // [오늘의집 단독] [무료설치] [사은품증정] … anywhere; keep non-promo brackets like [3인]
+  s = s.replace(/\[([^\]]{1,30})\]\s*/g, (m, inner: string) => (PROMO_WORD.test(inner) || /^오늘의집/.test(inner) ? ' ' : m));
+  // (쿠션 증정) (스툴선택) (방수커버 포함 이벤트)
+  s = s.replace(/\(([^)]{1,30})\)/g, (m, inner: string) => (PROMO_WORD.test(inner) ? ' ' : m));
+  // leading price/coupon segments: "할인가 159,900원/", "혜택가 52.7만/", "20%쿠폰ㅣ", "단하루 103,200원 "
+  for (let i = 0; i < 3; i++) {
+    const before = s;
+    s = s.replace(/^\s*[^/ㅣ|]{0,24}?(?:\d[\d,.]*\s*(?:원|만원?|%)|쿠폰|특가|할인)[^/ㅣ|]{0,12}?\s*[/ㅣ|]\s*/, '');
+    s = s.replace(/^\s*(?:단하루|오늘만|역대급|초특가|특가|최저가)\s*\d[\d,.]*\s*(?:원|만원?)\s*/, '');
+    if (s === before) break;
+  }
+  s = s.replace(/\s*\d{1,2}\s*colou?rs?\b/gi, ' ');
+  s = s.replace(/\s*\d{1,2}\s*컬러(?=\s|$)/g, ' ');
+  return s.replace(/\s+/g, ' ').replace(/^[\s/|,·-]+|[\s/|,·-]+$/g, '').trim();
+}
+
+/** "파로마 공식스토어" → "파로마" */
+export function cleanBrandName(raw: string): string {
+  const s = raw
+    .replace(/\s*(?:공식\s*(?:스토어|몰|판매처|인증\s*스토어)|official\s*store|스토어|몰)$/i, '')
+    .trim();
+  return s || raw.trim();
 }
 
 export function toCm(value: unknown, unit: unknown, maxCm = 10000): number | undefined {
@@ -129,8 +165,14 @@ export function extractDimensionsFromText(
   const parseExpr = (
     snippet: string,
     defaultUnit?: string,
+    bareMm = false,
   ): Partial<{ w: number; d: number; h: number }> | undefined => {
     const localUnit = extractUnitHint(snippet) ?? defaultUnit;
+    // Korean spec sheets often omit the unit: "1130*2160*1000" or "W2810 D970" are millimetres.
+    const bare = (v: string) => {
+      const n = Number(v.replace(/,/g, ''));
+      return bareMm && Number.isFinite(n) && n >= 100 && n <= 9999 ? (n >= 250 ? 'mm' : 'cm') : undefined;
+    };
     let lw: number | undefined;
     let ld: number | undefined;
     let lh: number | undefined;
@@ -158,7 +200,7 @@ export function extractDimensionsFromText(
         const prefix = snippet.slice(Math.max(0, (m.index ?? 0) - 10), m.index ?? 0);
         if (EXCLUDE_DIM_CONTEXT.test(prefix)) continue;
         const label = m[1].toLowerCase().replace(/\s+/g, '');
-        const u = m[3] ?? m[4] ?? explicitUnit;
+        const u = m[3] ?? m[4] ?? explicitUnit ?? (labeledMatches.every((x) => Number(x[2].replace(/,/g, '')) >= 250) ? bare(m[2]) : undefined);
         const cm = toCm(m[2], u, 1000);
         if (cm === undefined) continue;
 
@@ -211,7 +253,9 @@ export function extractDimensionsFromText(
         snippet,
       );
     if (triplet) {
-      const u = triplet[6] ?? triplet[7] ?? triplet[4] ?? triplet[2] ?? localUnit;
+      const nums = [triplet[1], triplet[3], triplet[5]].map((v) => Number(v.replace(/,/g, '')));
+      const bareUnit = nums.every((n) => n >= 100) && Math.max(...nums) >= 300 ? bare(triplet[1]) && 'mm' : undefined;
+      const u = triplet[6] ?? triplet[7] ?? triplet[4] ?? triplet[2] ?? localUnit ?? bareUnit;
       if (u) {
         lw = toCm(triplet[1], triplet[2] ?? u, 1000);
         ld = toCm(triplet[3], triplet[4] ?? u, 1000);
@@ -259,7 +303,7 @@ export function extractDimensionsFromText(
         !EXCLUDE_DIM_CONTEXT.test(label) &&
         !/^(?:크기|사이즈|규격|치수|제품크기|전체크기|외경|내경|size|dimensions?)$/i.test(label)
       ) {
-        const optDims = parseExpr(optMatch[2], sectionUnit);
+        const optDims = parseExpr(optMatch[2], sectionUnit, true);
         if (optDims && (optDims.w !== undefined || optDims.d !== undefined || optDims.h !== undefined)) {
           const key = `${label}:${optDims.w ?? ''}:${optDims.d ?? ''}:${optDims.h ?? ''}`;
           if (!seenOptions.has(key) && options.length < 12) {
@@ -278,7 +322,7 @@ export function extractDimensionsFromText(
 
     const isSpecLine = /(?:크기|사이즈|규격|제품\s*크기|전체\s*크기|치수|외경|size|dimensions?|가로|폭|깊이|높이|지름|\bW\s*\d)/i.test(line);
     if (isSpecLine && !EXCLUDE_DIM_CONTEXT.test(line)) {
-      const found = parseExpr(line, sectionUnit);
+      const found = parseExpr(line, sectionUnit, true);
       if (found) {
         setAxis('w', found.w);
         setAxis('d', found.d);
