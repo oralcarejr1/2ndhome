@@ -1,7 +1,8 @@
-import { DoorOpen, Hand, Image as ImageIcon, MousePointer2, Ruler, Spline, Square, Trash2 } from 'lucide-react';
+import { DoorOpen, FlipHorizontal2, FlipVertical2, Hand, Image as ImageIcon, MousePointer2, Ruler, Spline, Square, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { doorSwingPoly, resolveItems } from '../lib/analysis';
 import { add, bboxOf, closestOnSeg, dist, mul, norm, polyArea, polyCentroid, pyeong, snap, sub, uid, wallPoly } from '../lib/geometry';
+import { mirrorProject, type MirrorAxis } from '../lib/mirror';
 import { useImageUrl } from '../scene/ItemMesh';
 import { compressImage, storeImage } from '../store/persistence';
 import { activeVersion, useStore } from '../store/store';
@@ -24,6 +25,14 @@ export function PlanEditor({ editing, onToggleEdit }: { editing: boolean; onTogg
   const project = useStore((s) => s.project)!;
   const mutate = useStore((s) => s.mutate);
   const notify = useStore((s) => s.notify);
+  const flipHome = (axis: MirrorAxis) => {
+    mutate((p) => {
+      const m = mirrorProject(p, axis);
+      p.plan = m.plan;
+      p.versions = m.versions;
+    });
+    notify(`집 전체를 반전했어요 — 모든 배치안 포함, Cmd+Z로 되돌리기${plan.underlay ? ' · 도면 이미지는 그대로예요' : ''}`);
+  };
   const plan = project.plan;
   const v = activeVersion(project)!;
   const svgRef = useRef<SVGSVGElement>(null);
@@ -579,6 +588,17 @@ export function PlanEditor({ editing, onToggleEdit }: { editing: boolean; onTogg
                 ))}
               </select>
             </Field>
+          </div>
+          <div className="mini-note" style={{ marginTop: 8 }}>
+            대칭형 세대라면 도면·모든 배치안·문 방향을 한 번에 뒤집어요 (Cmd+Z로 되돌리기)
+          </div>
+          <div className="util-btn-grid" style={{ marginTop: 4 }}>
+            <button className="btn-secondary" onClick={() => flipHome('long')} title="긴 변을 따라 보았을 때 왼쪽과 오른쪽을 바꿔요">
+              <FlipVertical2 size={14} /> 긴 축 기준 좌우 반전
+            </button>
+            <button className="btn-secondary" onClick={() => flipHome('short')} title="짧은 변을 따라 보았을 때 왼쪽과 오른쪽을 바꿔요">
+              <FlipHorizontal2 size={14} /> 짧은 축 기준 반전
+            </button>
           </div>
           {project.info?.planNote && <div className="callout info">{project.info.planNote}</div>}
           {calib.length === 2 && (
