@@ -35,7 +35,7 @@ import { fmtWon, uid } from '../lib/geometry';
 import { requestCamera } from '../scene/sceneState';
 import { putBlob } from '../store/persistence';
 import { activeVersion, getProduct, syncText, useStore } from '../store/store';
-import type { Pose, Version } from '../types';
+import type { Pose, Project, Version } from '../types';
 import { mainAvatar, runScenario, setPose, updateAvatar, type Scenario } from './actions';
 import { exportProject, layoutCode, parseLayoutCode } from './backup';
 import { Confirm, dataUrlToBlob, download, Modal, Num } from './common';
@@ -456,6 +456,8 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
   const notify = useStore((s) => s.notify);
   const requestShot = useStore((s) => s.requestShot);
   const importProject = useStore((s) => s.importProject);
+  const replaceProject = useStore((s) => s.replaceProject);
+  const [pendingRestore, setPendingRestore] = useState<Project | null>(null);
   const switchProject = useStore((s) => s.switchProject);
   const newProject = useStore((s) => s.newProject);
   const deleteProject = useStore((s) => s.deleteProject);
@@ -600,6 +602,11 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
                   const o = JSON.parse(await f.text());
                   if (o.format !== '2ndhome' || !o.project) throw new Error();
                   for (const [id, b] of Object.entries(o.blobs ?? {}) as [string, { data: string }][]) await putBlob(id, dataUrlToBlob(b.data));
+                  e.target.value = '';
+                  if (list.some((x) => x.id === o.project.id)) {
+                    setPendingRestore(o.project); // same home already here: ask whether to replace it
+                    return;
+                  }
                   importProject(o.project);
                   notify('백업 데이터를 모두 복원했어요');
                 } catch {
@@ -610,6 +617,36 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
           </label>
         </div>
       </div>
+      {pendingRestore && (
+        <div className="callout info" style={{ margin: '8px 0 0' }}>
+          <b>'{list.find((x) => x.id === pendingRestore.id)?.name ?? pendingRestore.name}'</b>이(가) 이미 있어요. 이 파일 내용으로 바꿀까요? 바꾸면 다른 기기에서도 같은 내용이 보여요.
+          <div className="row" style={{ gap: 6, marginTop: 8 }}>
+            <button
+              className="btn-xs primary"
+              onClick={() => {
+                const p = pendingRestore;
+                setPendingRestore(null);
+                void replaceProject(p).then(() => notify('기존 프로젝트를 이 파일 내용으로 바꿨어요'));
+              }}
+            >
+              기존 것 바꾸기
+            </button>
+            <button
+              className="btn-xs"
+              onClick={() => {
+                importProject(pendingRestore);
+                setPendingRestore(null);
+                notify('새 프로젝트로 따로 추가했어요');
+              }}
+            >
+              따로 추가
+            </button>
+            <button className="btn-xs" onClick={() => setPendingRestore(null)}>
+              취소
+            </button>
+          </div>
+        </div>
+      )}
       {(sync === 'server' || sync === 'server-nostore') && (
         <div className="insp-section">
           <div className="insp-label">이 기기</div>

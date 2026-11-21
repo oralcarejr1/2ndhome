@@ -31,6 +31,7 @@ export function PlanEditor({ editing, onToggleEdit }: { editing: boolean; onTogg
       p.plan = m.plan;
       p.versions = m.versions;
     });
+    void useStore.getState().syncNow(); // other devices should see a flip right away
     notify(`집 전체를 반전했어요 — 모든 배치안 포함, Cmd+Z로 되돌리기${plan.underlay ? ' · 도면 이미지는 그대로예요' : ''}`);
   };
   const plan = project.plan;
