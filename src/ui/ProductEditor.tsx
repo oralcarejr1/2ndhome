@@ -1,11 +1,17 @@
 import { OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
-import { Upload } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronUp, Image as ImageIcon, Sparkles, Upload } from 'lucide-react';
+import { useEffect, useMemo, useState, type ClipboardEvent } from 'react';
 import { CATEGORIES } from '../catalog/categories';
-import { uid } from '../lib/geometry';
+import { fmtWon, uid } from '../lib/geometry';
 import { detectFormat, loadRaw, measureRaw } from '../lib/modelLoader';
-import { MODEL_FOR_CATEGORY, normalizeProductUrl, type ImportedProduct } from '../lib/productImport';
+import {
+  extractProductUrl,
+  MODEL_FOR_CATEGORY,
+  normalizeProductUrl,
+  type ImportedProduct,
+  type ImportedProductOption,
+} from '../lib/productImport';
 import { MODELS, resolveMats, resolveParams } from '../models';
 import { buildPerson } from '../models/person';
 import { ItemModel } from '../scene/ItemMesh';
@@ -14,26 +20,34 @@ import { useStore } from '../store/store';
 import type { CategoryId, ModelAsset, Mount, Product } from '../types';
 import { Field, MatInput, Modal, Num, ParamInput } from './common';
 
-const MODEL_FOR_CAT: Record<string, string> = {
-  sofa: 'sofa',
-  chair: 'chair',
-  table: 'table',
-  desk: 'table',
-  bed: 'bed',
-  storage: 'case',
-  shelf: 'shelf',
-  lighting: 'lamp',
-  textile: 'rug',
-  plant: 'plant',
-  decor: 'decor',
-  appliance: 'appliance',
-  electronics: 'screen',
-  kitchen: 'kitchen',
-  bath: 'bath',
-  fitness: 'activity',
-  kids: 'activity',
-  misc: 'block',
-};
+type ImportPayload = { url?: string; text?: string; image?: string };
+
+async function resizeImageToDataUrl(file: Blob): Promise<string> {
+  const objectUrl = URL.createObjectURL(file);
+  try {
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('image_load_failed'));
+      el.src = objectUrl;
+    });
+    const maxEdge = 2048;
+    const scale = Math.min(1, maxEdge / Math.max(img.naturalWidth || 1, img.naturalHeight || 1));
+    const w = Math.max(1, Math.round(img.naturalWidth * scale));
+    const h = Math.max(1, Math.round(img.naturalHeight * scale));
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('canvas_unavailable');
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    return canvas.toDataURL('image/jpeg', 0.88);
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
 
 function Preview({ p, height }: { p: Product; height: number }) {
   const theme = useStore((s) => s.theme);
@@ -78,62 +92,233 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
           params: resolveParams(base),
           mats: resolveMats(base),
         }
-      : { id: uid('c-'), name: '', brand: '', category: 'sofa', model: 'sofa', dims: { w: 200, d: 90, h: 80 }, custom: true, params: resolveParams({ model: 'sofa' } as Product), mats: resolveMats({ model: 'sofa' } as Product) },
+      : {
+          id: uid('c-'),
+          name: '',
+          brand: '',
+          category: 'sofa',
+          model: 'sofa',
+          dims: { w: 200, d: 90, h: 80 },
+          custom: true,
+          params: resolveParams({ model: 'sofa' } as Product),
+          mats: resolveMats({ model: 'sofa' } as Product),
+        },
   );
   const [raw, setRaw] = useState<{ x: number; y: number; z: number } | null>(null);
   const [err, setErr] = useState('');
   const [pageUrl, setPageUrl] = useState(importUrl ?? base?.url ?? '');
+  const [pasteText, setPasteText] = useState('');
+  const [showFallback, setShowFallback] = useState(false);
   const [loading, setLoading] = useState(false);
   const [importNote, setImportNote] = useState('');
+  const [aiUsed, setAiUsed] = useState(false);
+  const [importedOptions, setImportedOptions] = useState<ImportedProductOption[]>([]);
+  const [activeOptionIdx, setActiveOptionIdx] = useState<number | null>(null);
   const [needsDimensionCheck, setNeedsDimensionCheck] = useState(false);
   const [dimensionChecked, setDimensionChecked] = useState(false);
-  const [importRequest, setImportRequest] = useState(() => importUrl ? { url: importUrl } : undefined);
+  const [importRequest, setImportRequest] = useState<ImportPayload | undefined>(() =>
+    importUrl ? { url: importUrl } : undefined,
+  );
   const def = MODELS[p.model];
   const height = project.profiles.find((x) => x.id === project.activeProfileId)?.height ?? 170;
 
   useEffect(() => {
     if (!importRequest) return;
-    const requestUrl = importRequest.url;
     const controller = new AbortController();
     setLoading(true);
     setErr('');
     setImportNote('');
+    setAiUsed(false);
+    setImportedOptions([]);
+    setActiveOptionIdx(null);
     setNeedsDimensionCheck(true);
     setDimensionChecked(false);
-    setP((x) => ({ ...x, url: requestUrl }));
+    if (importRequest.url) setP((x) => ({ ...x, url: importRequest.url }));
+
     (async () => {
       try {
         const response = await fetch('/api/product', {
-          method: 'POST', headers: { 'content-type': 'application/json', 'x-2ndhome': '1' },
-          body: JSON.stringify({ url: requestUrl }), signal: controller.signal,
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-2ndhome': '1' },
+          body: JSON.stringify(importRequest),
+          signal: controller.signal,
         });
-        if (!response.ok) throw new Error('import_failed');
-        const data: ImportedProduct = await response.json();
+        const body = await response.json().catch(() => ({}));
         if (controller.signal.aborted) return;
+
+        if (!response.ok) {
+          if (body?.error === 'ai_required') {
+            setShowFallback(true);
+            setImportNote('캡처 이미지 분석은 서버에 AI 키(GEMINI_API_KEY 등)를 연결해야 사용할 수 있어요. 페이지 텍스트를 복사해 붙여넣으면 AI 없이도 분석돼요.');
+          } else {
+            setShowFallback(true);
+            setImportNote('판매처에서 자동으로 페이지를 읽지 못했어요. 링크는 입력했으니 아래에 페이지 내용을 붙여넣거나 치수를 직접 입력해 저장할 수 있어요.');
+          }
+          return;
+        }
+
+        const data = body as ImportedProduct;
+        if (data.blocked) {
+          setShowFallback(true);
+          setImportNote(
+            data.aiConfigured
+              ? '이 판매처는 자동 접근을 막고 있어요. 링크는 저장했으니 아래에 상품 페이지 텍스트를 붙여넣거나 사이즈표 캡처를 붙여넣어(Ctrl+V) 불러와 보세요.'
+              : '이 판매처는 자동 접근을 막고 있어요. 아래에 페이지 텍스트를 복사해 붙여넣거나, Vercel에 AI 키(GEMINI_API_KEY)를 연결하면 사이즈표 캡처·웹 조회도 가능해요.',
+          );
+          return;
+        }
+
+        const usedAi = data.source === 'page+ai' || data.source === 'ai-web' || data.source === 'text+ai' || data.source === 'image+ai';
+        setAiUsed(usedAi);
+
         setP((x) => {
-          const model = !base && data.category ? MODEL_FOR_CATEGORY[data.category] ?? x.model : x.model;
+          const nextCategory = data.category ?? x.category;
+          const nextModel = !base
+            ? data.model && MODELS[data.model]
+              ? data.model
+              : data.category
+                ? MODEL_FOR_CATEGORY[data.category] ?? x.model
+                : x.model
+            : x.model;
           const dims = { ...x.dims };
-          for (const axis of ['w', 'd', 'h'] as const) if (data.dims?.[axis] !== undefined) dims[axis] = data.dims[axis]!;
-          return { ...x, url: data.url, name: data.name ?? x.name, brand: data.brand ?? x.brand,
-            price: data.price ?? x.price, category: data.category ?? x.category, dims, model,
-            ...(model !== x.model ? { params: resolveParams({ model } as Product), mats: resolveMats({ model } as Product) } : {}) };
+          for (const axis of ['w', 'd', 'h'] as const) {
+            if (data.dims?.[axis] !== undefined) dims[axis] = data.dims[axis]!;
+          }
+          const modelChanged = nextModel !== x.model;
+          let mats = modelChanged ? resolveMats({ model: nextModel } as Product) : { ...(x.mats ?? {}) };
+          if (!base && (data.color || data.material)) {
+            const firstSlot = Object.keys(MODELS[nextModel]?.slots ?? {})[0];
+            if (firstSlot) {
+              const cur = mats[firstSlot] ?? MODELS[nextModel].slots[firstSlot].def;
+              mats = {
+                ...mats,
+                [firstSlot]: {
+                  kind: data.material ?? cur.kind,
+                  color: data.color ?? cur.color,
+                },
+              };
+            }
+          }
+          return {
+            ...x,
+            url: data.url ?? x.url,
+            name: data.name ?? x.name,
+            brand: data.brand ?? x.brand,
+            price: data.price ?? x.price,
+            category: nextCategory,
+            dims,
+            model: nextModel,
+            mount: data.mount ?? x.mount,
+            ergo: data.ergo ?? x.ergo,
+            notes: data.notes ?? x.notes,
+            mats,
+            ...(modelChanged ? { params: resolveParams({ model: nextModel } as Product) } : {}),
+          };
         });
-        const missing = [!data.name && '제품명', !data.brand && '브랜드', data.price === undefined && '가격',
-          !data.category && '분류', !(['w', 'd', 'h'] as const).every((a) => data.dims?.[a] !== undefined) && '치수'].filter(Boolean);
-        setImportNote(missing.length ? `불러왔어요. ${missing.join('·')} 정보는 직접 확인해 주세요. 읽지 못한 치수에는 현재 입력값이 남아 있어요.` : '상품 정보를 불러왔어요. 선택한 옵션의 치수와 가격이 맞는지 확인해 주세요.');
+
+        if (data.options?.length) {
+          setImportedOptions(data.options);
+        }
+
+        const hasAllDims = (['w', 'd', 'h'] as const).every((a) => data.dims?.[a] !== undefined);
+        const missing = [
+          !data.name && '제품명',
+          !data.brand && '브랜드',
+          data.price === undefined && '가격',
+          !data.category && '분류',
+          !hasAllDims && '치수',
+        ].filter(Boolean);
+
+        if (!hasAllDims) setShowFallback(true);
+
+        const aiTag = usedAi ? ' (AI 분석 포함)' : '';
+        if (missing.length) {
+          const dimTip =
+            !hasAllDims && data.aiConfigured === false
+              ? ' 치수가 상세 이미지 안에만 있다면 아래에 텍스트를 붙여넣거나, 서버에 AI 키(GEMINI_API_KEY)를 연결하면 이미지 치수까지 자동으로 읽어요.'
+              : !hasAllDims
+                ? ' 치수가 상세 이미지에 있다면 사이즈표 영역을 캡처해 아래에 붙여넣어(Ctrl+V) 보세요.'
+                : '';
+          setImportNote(`불러왔어요${aiTag}. ${missing.join('·')} 정보는 직접 확인해 주세요.${dimTip}`);
+        } else {
+          setImportNote(`상품 정보를 모두 불러왔어요${aiTag}. 선택한 옵션의 치수와 가격이 맞는지 확인해 주세요.`);
+        }
       } catch {
-        if (!controller.signal.aborted) setImportNote('판매처에서 정보를 읽지 못했어요. 링크는 입력했으니 제품명과 치수를 직접 입력해 후보로 저장할 수 있어요.');
-      } finally { if (!controller.signal.aborted) setLoading(false); }
+        if (!controller.signal.aborted) {
+          setShowFallback(true);
+          setImportNote('판매처에서 정보를 읽지 못했어요. 아래에 페이지 텍스트나 사이즈표 캡처를 붙여넣거나 직접 입력해 저장할 수 있어요.');
+        }
+      } finally {
+        if (!controller.signal.aborted) setLoading(false);
+      }
     })();
     return () => controller.abort();
   }, [importRequest]);
 
   const importPage = () => {
     try {
-      const url = normalizeProductUrl(pageUrl);
+      const url = extractProductUrl(pageUrl);
+      setPageUrl(url);
       setErr('');
       setImportRequest({ url });
-    } catch { setErr('판매 페이지의 전체 주소(http 또는 https)를 입력하세요'); }
+    } catch {
+      setErr('판매 페이지의 주소(http 또는 https)를 입력하세요');
+    }
+  };
+
+  const optionalNormalizedUrl = () => {
+    if (!pageUrl.trim()) return undefined;
+    try {
+      return extractProductUrl(pageUrl);
+    } catch {
+      return undefined;
+    }
+  };
+
+  const importFromText = () => {
+    const t = pasteText.trim();
+    if (!t) return setErr('붙여넣은 상품 설명이나 치수 텍스트를 입력하세요');
+    setErr('');
+    setImportRequest({ text: t, url: optionalNormalizedUrl() });
+  };
+
+  const importFromImageFile = async (file: Blob) => {
+    setErr('');
+    setLoading(true);
+    try {
+      const image = await resizeImageToDataUrl(file);
+      setImportRequest({
+        image,
+        text: pasteText.trim() || undefined,
+        url: optionalNormalizedUrl(),
+      });
+    } catch {
+      setLoading(false);
+      setErr('이미지를 읽지 못했어요. PNG 또는 JPG 이미지로 시도해 주세요');
+    }
+  };
+
+  const onFallbackPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = Array.from(e.clipboardData?.items ?? []);
+    const imgItem = items.find((it) => it.type.startsWith('image/'));
+    if (imgItem) {
+      const blob = imgItem.getAsFile();
+      if (blob) {
+        e.preventDefault();
+        void importFromImageFile(blob);
+      }
+    }
+  };
+
+  const applyOption = (opt: ImportedProductOption, idx: number) => {
+    setActiveOptionIdx(idx);
+    setP((x) => {
+      const dims = { ...x.dims };
+      for (const axis of ['w', 'd', 'h'] as const) {
+        if (opt.dims?.[axis] !== undefined) dims[axis] = opt.dims[axis]!;
+      }
+      return { ...x, dims, ...(opt.price !== undefined ? { price: opt.price } : {}) };
+    });
   };
 
   useEffect(() => {
@@ -143,10 +328,11 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
       .catch(() => setErr('3D 파일을 읽지 못했어요'));
   }, [p.asset?.blobId, p.asset?.rotX, p.asset?.rotY]);
 
-  const setModel = (model: string) => setP((x) => ({ ...x, model, params: resolveParams({ model } as Product), mats: resolveMats({ model } as Product) }));
+  const setModel = (model: string) =>
+    setP((x) => ({ ...x, model, params: resolveParams({ model } as Product), mats: resolveMats({ model } as Product) }));
   const setCat = (category: CategoryId) => {
     setP((x) => ({ ...x, category }));
-    if (!base) setModel(MODEL_FOR_CAT[category] ?? 'block');
+    if (!base) setModel(MODEL_FOR_CATEGORY[category] ?? 'block');
   };
 
   const onFile = async (f: File) => {
@@ -154,7 +340,9 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
     if (!fmt) return setErr('GLB, GLTF(단일 파일), OBJ, FBX, STL 파일을 지원해요');
     setErr('');
     const { id: blobId, synced } = await storeFile(f);
-    if (!synced && useStore.getState().sync === 'server') notify('4MB가 넘는 3D 파일은 이 기기에만 저장돼요 — 다른 기기에서는 기본 모양으로 보여요');
+    if (!synced && useStore.getState().sync === 'server') {
+      notify('4MB가 넘는 3D 파일은 이 기기에만 저장돼요 — 다른 기기에서는 기본 모양으로 보여요');
+    }
     const asset: ModelAsset = { blobId, format: fmt, fileName: f.name, fit: 'stretch', rotX: 0, rotY: 0, keepMaterials: true };
     setP((x) => ({ ...x, asset }));
   };
@@ -164,12 +352,18 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
     if (!p.name.trim()) return setErr('제품 이름을 입력하세요');
     if (needsDimensionCheck && !dimensionChecked) return setErr('판매 페이지에서 치수를 확인하고 확인란을 체크하세요');
     if (Object.values(p.dims).some((n) => !Number.isFinite(n) || n < 0.5)) return setErr('치수는 0.5cm 이상으로 입력하세요');
-    try { if (p.url) normalizeProductUrl(p.url); } catch { return setErr('판매 링크 주소를 확인하세요'); }
+    try {
+      if (p.url) normalizeProductUrl(p.url);
+    } catch {
+      return setErr('판매 링크 주소를 확인하세요');
+    }
     upsertProduct({ ...p, name: p.name.trim(), brand: p.brand.trim() || '직접 입력' });
-    if (!editing) useStore.getState().mutate((draft) => {
-      if (!draft.shortlist.includes(p.id)) draft.shortlist.push(p.id);
-    }, false);
-    notify(editing ? '제품을 수정했어요' : '내 제품으로 저장했어요 — 카탈로그 "내가 추가"에 있어요');
+    if (!editing) {
+      useStore.getState().mutate((draft) => {
+        if (!draft.shortlist.includes(p.id)) draft.shortlist.push(p.id);
+      }, false);
+    }
+    notify(editing ? '제품을 수정했어요' : '내 제품으로 저장했어요 — 카탈로그 "직접 등록"에 있어요');
     if (place) startPlacing(p.id);
     onClose();
   };
@@ -186,7 +380,7 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
   return (
     <Modal
       title={editing ? '구매 후보 수정' : base ? `"${base.name}" 바탕으로 내 후보 만들기` : '실제 구매 후보 직접 등록'}
-      sub="판매 페이지의 치수·형태·색을 넣으면 같은 비례의 3D 가구가 만들어져요"
+      sub="판매 페이지 링크나 사이즈표를 넣으면 같은 비례의 3D 가구가 만들어져요"
       onClose={onClose}
       wide
       foot={
@@ -207,13 +401,110 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
       <div className="pe-grid">
         <div>
           <div className="product-link-form">
-            <label htmlFor="editor-product-url">판매 페이지에서 정보 불러오기</label>
+            <label htmlFor="editor-product-url">
+              판매 페이지에서 정보 불러오기
+              {aiUsed && (
+                <span className="import-ai-badge">
+                  <Sparkles size={11} /> AI 분석
+                </span>
+              )}
+            </label>
             <div className="product-link-row">
-              <input id="editor-product-url" className="inp" type="url" placeholder="https://판매 페이지 주소" value={pageUrl} disabled={loading} onChange={(e) => setPageUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); importPage(); } }} />
-              <button className="btn-secondary" disabled={loading || !pageUrl.trim()} onClick={importPage}>{loading ? '불러오는 중…' : '불러오기'}</button>
+              <input
+                id="editor-product-url"
+                className="inp"
+                type="text"
+                inputMode="url"
+                placeholder="오늘의집·이케아·네이버 등 판매 페이지 주소 붙여넣기"
+                value={pageUrl}
+                disabled={loading}
+                onChange={(e) => setPageUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    importPage();
+                  }
+                }}
+              />
+              <button className="btn-secondary" disabled={loading || !pageUrl.trim()} onClick={importPage}>
+                {loading ? '읽는 중…' : '불러오기'}
+              </button>
             </div>
-            <p className="note" role="status">{loading ? '판매 페이지에서 상품 정보를 읽고 있어요…' : importNote || '제품명·브랜드·원화 가격·치수를 가능한 만큼 채워요.'}</p>
+            <p className="note" role="status">
+              {loading
+                ? '판매 페이지에서 상품명·가격·치수 정보를 분석하고 있어요…'
+                : importNote || '오늘의집·스마트스토어·이케아 등 어떤 판매 링크든 제품명·브랜드·가격·치수를 가능한 만큼 채워요.'}
+            </p>
+
+            {importedOptions.length > 0 && (
+              <div className="import-options">
+                <div className="import-options-label">감지된 사이즈 옵션 (눌러서 적용)</div>
+                <div className="import-option-chips">
+                  {importedOptions.map((opt, idx) => {
+                    const dimLabel = [opt.dims?.w, opt.dims?.d, opt.dims?.h].some((v) => v !== undefined)
+                      ? `${opt.dims?.w ?? '?'}×${opt.dims?.d ?? '?'}×${opt.dims?.h ?? '?'}cm`
+                      : '';
+                    return (
+                      <button
+                        key={`${opt.label}-${idx}`}
+                        type="button"
+                        className={'chip sm' + (activeOptionIdx === idx ? ' active' : '')}
+                        onClick={() => applyOption(opt, idx)}
+                      >
+                        {opt.label}
+                        {dimLabel ? ` · ${dimLabel}` : ''}
+                        {opt.price ? ` · ${fmtWon(opt.price)}` : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="import-fallback-toggle"
+              onClick={() => setShowFallback((x) => !x)}
+              aria-expanded={showFallback}
+            >
+              <span>페이지가 막혔거나 치수가 상세 이미지에 있나요? 텍스트 · 캡처로 불러오기</span>
+              {showFallback ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+            </button>
+
+            {showFallback && (
+              <div className="import-fallback-box">
+                <textarea
+                  className="inp"
+                  rows={3}
+                  disabled={loading}
+                  value={pasteText}
+                  onChange={(e) => setPasteText(e.target.value)}
+                  onPaste={onFallbackPaste}
+                  placeholder="상품 페이지 내용을 복사해 붙여넣거나(Ctrl+A→C→V), 사이즈표 캡처 이미지를 여기에 바로 붙여넣으세요(Ctrl+V)"
+                />
+                <div className="import-fallback-acts">
+                  <button type="button" className="btn-secondary" disabled={loading || !pasteText.trim()} onClick={importFromText}>
+                    텍스트 분석
+                  </button>
+                  <label className={'btn-secondary' + (loading ? ' disabled' : '')}>
+                    <ImageIcon size={13} /> 사이즈표 캡처 올리기
+                    <input
+                      type="file"
+                      hidden
+                      disabled={loading}
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = '';
+                        if (f) void importFromImageFile(f);
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
           </div>
+
           <div className="grid2" style={{ marginTop: 12 }}>
             <Field label="제품 이름 *">
               <input className="inp" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} placeholder="예: 클레어 3인 패브릭 소파" />
@@ -258,10 +549,12 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
               <Num value={p.dims.h} unit="cm" min={0.5} onChange={(h) => setP({ ...p, dims: { ...p.dims, h } })} />
             </Field>
           </div>
-          {needsDimensionCheck && <label className="check">
-            <input type="checkbox" checked={dimensionChecked} onChange={(e) => setDimensionChecked(e.target.checked)} />
-            판매 페이지에서 선택한 옵션의 가로·깊이·높이를 확인했어요
-          </label>}
+          {needsDimensionCheck && (
+            <label className="check">
+              <input type="checkbox" checked={dimensionChecked} onChange={(e) => setDimensionChecked(e.target.checked)} />
+              판매 페이지에서 선택한 옵션의 가로·깊이·높이를 확인했어요
+            </label>
+          )}
           <div className="grid3" style={{ marginTop: 6 }}>
             <Field label="설치">
               <select className="inp" value={p.mount ?? 'floor'} onChange={(e) => setP({ ...p, mount: e.target.value as Mount })}>
@@ -355,7 +648,20 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
                   파일 원래 크기 {raw.x.toFixed(2)} × {raw.z.toFixed(2)} × {raw.y.toFixed(2)} (단위 불명) — 파일 단위로 치수 채우기:
                   <div className="row">
                     {unitGuess.map((u) => (
-                      <button key={u.l} className="btn-xs" onClick={() => setP({ ...p, dims: { w: Math.round(raw.x * u.f * 10) / 10, d: Math.round(raw.z * u.f * 10) / 10, h: Math.round(raw.y * u.f * 10) / 10 } })}>
+                      <button
+                        key={u.l}
+                        className="btn-xs"
+                        onClick={() =>
+                          setP({
+                            ...p,
+                            dims: {
+                              w: Math.round(raw.x * u.f * 10) / 10,
+                              d: Math.round(raw.z * u.f * 10) / 10,
+                              h: Math.round(raw.y * u.f * 10) / 10,
+                            },
+                          })
+                        }
+                      >
                         {u.l}
                       </button>
                     ))}
@@ -374,7 +680,12 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
               <div className="insp-label" style={{ marginTop: 12 }}>형태 세부</div>
               <div className="grid2">
                 {def.params.map((pd) => (
-                  <ParamInput key={pd.key} def={pd} value={p.params?.[pd.key] ?? pd.default} onChange={(v) => setP({ ...p, params: { ...(p.params ?? {}), [pd.key]: v } })} />
+                  <ParamInput
+                    key={pd.key}
+                    def={pd}
+                    value={p.params?.[pd.key] ?? pd.default}
+                    onChange={(v) => setP({ ...p, params: { ...(p.params ?? {}), [pd.key]: v } })}
+                  />
                 ))}
               </div>
             </>
@@ -384,13 +695,23 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
               <div className="insp-label" style={{ marginTop: 12 }}>색 · 재질</div>
               <div className="grid2">
                 {Object.entries(def.slots).map(([k, s]) => (
-                  <MatInput key={k} label={s.label} value={p.mats?.[k] ?? s.def} onChange={(m) => setP({ ...p, mats: { ...(p.mats ?? {}), [k]: m } })} />
+                  <MatInput
+                    key={k}
+                    label={s.label}
+                    value={p.mats?.[k] ?? s.def}
+                    onChange={(m) => setP({ ...p, mats: { ...(p.mats ?? {}), [k]: m } })}
+                  />
                 ))}
               </div>
             </>
           )}
           <div className="insp-label" style={{ marginTop: 12 }}>메모</div>
-          <textarea className="inp" value={p.notes ?? ''} onChange={(e) => setP({ ...p, notes: e.target.value || undefined })} placeholder="색상 옵션, 배송일, 할인 정보 등" />
+          <textarea
+            className="inp"
+            value={p.notes ?? ''}
+            onChange={(e) => setP({ ...p, notes: e.target.value || undefined })}
+            placeholder="색상 옵션, 배송일, 할인 정보 등"
+          />
         </div>
         <div>
           <div className="pe-preview" style={{ position: 'sticky', top: 0, height: 420 }}>
@@ -402,4 +723,3 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
     </Modal>
   );
 }
-

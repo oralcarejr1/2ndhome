@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { CATEGORIES } from '../catalog/categories';
 import { PRODUCTS, productSearchUrl } from '../catalog/products';
 import { fmtWon } from '../lib/geometry';
-import { normalizeProductUrl } from '../lib/productImport';
+import { extractProductUrl } from '../lib/productImport';
 import { getThumb } from '../lib/thumbs';
 import { useStore } from '../store/store';
 import type { CategoryId, Product } from '../types';
@@ -131,13 +131,13 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
             onSubmit={(e) => {
               e.preventDefault();
               try {
-                const url = normalizeProductUrl(pageUrl);
+                const url = extractProductUrl(pageUrl);
                 setUrlError('');
                 setShowUrlForm(false);
                 setPageUrl('');
                 onCustom(undefined, url);
               } catch {
-                setUrlError('http 또는 https 전체 주소를 입력하세요');
+                setUrlError('판매 페이지 주소(http 또는 https)를 입력하세요');
               }
             }}
           >
@@ -146,9 +146,10 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
               <input
                 id="catalog-product-url"
                 className="inp"
-                type="url"
+                type="text"
+                inputMode="url"
                 required
-                placeholder="https://판매 페이지 주소"
+                placeholder="오늘의집·이케아·네이버 등 판매 링크 붙여넣기"
                 value={pageUrl}
                 onChange={(e) => {
                   setPageUrl(e.target.value);
