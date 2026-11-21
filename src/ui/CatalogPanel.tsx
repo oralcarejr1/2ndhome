@@ -108,8 +108,8 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product) => void 
             <input placeholder="가구·브랜드 검색" value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
         </div>
-        <button className="btn-primary" onClick={() => onCustom()}>
-          <Plus size={14} /> 실제 구매 후보 직접 등록 (치수·3D 파일)
+        <button className="btn-secondary btn-register" onClick={() => onCustom()} title="판매 페이지의 치수·색·가격이나 제조사 3D 파일로 내 후보 만들기">
+          <Plus size={14} /> 구매 후보 직접 등록
         </button>
       </div>
       <div className="cat-chips cat-scroll">

@@ -229,7 +229,7 @@ export interface FloorPlan {
   underlay?: Underlay;
 }
 
-export type FloorKind = 'oak' | 'walnut' | 'ash' | 'herringbone' | 'tile' | 'bigtile' | 'concrete' | 'terrazzo' | 'carpet' | 'vinyl';
+export type FloorKind = 'oak' | 'walnut' | 'ash' | 'herringbone' | 'tile' | 'bigtile' | 'concrete' | 'terrazzo' | 'carpet' | 'vinyl' | 'decotile';
 
 export interface FloorFinish {
   kind: FloorKind;

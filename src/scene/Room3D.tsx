@@ -23,9 +23,11 @@ function floorMat(kind: string, color: string) {
   const m = new THREE.MeshStandardMaterial({
     map: tex,
     color,
-    roughness: kind === 'tile' || kind === 'bigtile' ? 0.35 : kind === 'carpet' ? 1 : 0.55,
+    roughness: kind === 'decotile' ? 0.42 : kind === 'tile' || kind === 'bigtile' ? 0.35 : kind === 'carpet' ? 1 : 0.55,
     metalness: 0,
   });
+  // a dark, lightly polished floor: a soft sheen, not a mirror of the bright room around it
+  if (kind === 'decotile') m.envMapIntensity = 0.35;
   floorMatCache.set(key, m);
   return m;
 }

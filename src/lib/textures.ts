@@ -222,6 +222,7 @@ export function floorTexture(kind: string): { tex: THREE.Texture; size: number }
     concrete: 300,
     terrazzo: 200,
     carpet: 100,
+    decotile: 180,
   };
   const size = sizes[kind] ?? 200;
   if (cache.has(key)) return { tex: cache.get(key)!, size };
@@ -305,6 +306,22 @@ export function floorTexture(kind: string): { tex: THREE.Texture; size: number }
   } else if (kind === 'concrete' || kind === 'terrazzo') {
     const t = stoneTexture(kind as 'concrete' | 'terrazzo');
     g.drawImage(t.image as HTMLCanvasElement, 0, 0, W, W);
+  } else if (kind === 'decotile') {
+    // 45 cm square vinyl tiles: near-uniform face, joints that only just catch the light
+    const ts = 45 * px;
+    for (let y = 0; y < W; y += ts) {
+      for (let x = 0; x < W; x += ts) {
+        g.fillStyle = gray(0.84 + r() * 0.03);
+        g.fillRect(x, y, ts, ts);
+        for (let i = 0; i < 60; i++) {
+          g.fillStyle = `rgba(255,255,255,${r() * 0.025})`;
+          g.fillRect(x + r() * ts, y + r() * ts, 2, 2);
+        }
+        g.strokeStyle = 'rgba(255,255,255,0.5)';
+        g.lineWidth = 1.5;
+        g.strokeRect(x + 0.75, y + 0.75, ts - 1.5, ts - 1.5);
+      }
+    }
   } else if (kind === 'carpet') {
     for (let i = 0; i < 40000; i++) {
       g.fillStyle = `rgba(${r() < 0.5 ? '0,0,0' : '255,255,255'},${r() * 0.08})`;

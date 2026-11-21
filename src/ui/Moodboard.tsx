@@ -155,7 +155,7 @@ export function Moodboard({ compact = false }: { compact?: boolean }) {
       <div className="mood-header">
         <div>
           <h3>
-            <Palette size={compact ? 15 : 18} /> Aesthetic Reference
+            <Palette size={compact ? 15 : 18} /> 무드보드
           </h3>
           {!compact && (
             <p className="mood-sub">
