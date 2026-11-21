@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { doorSwingPoly } from '../lib/analysis';
 import { bboxOf, dist, norm, sub } from '../lib/geometry';
 import { floorTexture } from '../lib/textures';
+import { useStore } from '../store/store';
 import type { Finishes, FloorPlan, Opening, Wall } from '../types';
 
 interface Props {
@@ -249,7 +250,11 @@ function SwingArcs({ plan }: { plan: FloorPlan }) {
   );
 }
 
+const SLAB_H = 10;
+
 export function Room3D({ plan, finishes, wallMode, view, showCeiling }: Props) {
+  const theme = useStore((s) => s.theme);
+  const darkStage = theme === 'dark' || finishes.hour <= 6 || finishes.hour >= 19;
   const all = plan.rooms.flatMap((r) => r.points).concat(plan.walls.flatMap((w) => [w.a, w.b]));
   const bb = all.length ? bboxOf(all) : { minX: 0, minY: 0, maxX: 400, maxY: 400 };
   const center = useMemo(() => new THREE.Vector2((bb.minX + bb.maxX) / 2, (bb.minY + bb.maxY) / 2), [bb.minX, bb.minY, bb.maxX, bb.maxY]);
@@ -275,6 +280,48 @@ export function Room3D({ plan, finishes, wallMode, view, showCeiling }: Props) {
     [plan.rooms, finishes.floor, finishes.roomFloors],
   );
 
+  const slabs = useMemo(
+    () =>
+      plan.rooms
+        .filter((r) => r.points.length >= 3)
+        .map((r) => {
+          const s = new THREE.Shape(r.points.map(([x, y]) => new THREE.Vector2(x, -y)));
+          const g = new THREE.ExtrudeGeometry(s, { depth: SLAB_H, bevelEnabled: false });
+          g.rotateX(-Math.PI / 2);
+          return { id: r.id, g };
+        }),
+    [plan.rooms],
+  );
+
+  const wallPlinths = useMemo(
+    () =>
+      plan.walls
+        .filter((w) => dist(w.a, w.b) > 0.01)
+        .map((w) => {
+          const L = dist(w.a, w.b);
+          const ang = Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0]);
+          const dir = norm(sub(w.b, w.a));
+          const ea = extendAmount(w, 'a', plan.walls);
+          const eb = extendAmount(w, 'b', plan.walls);
+          const len = L + ea + eb;
+          const c = (L + eb - ea) / 2;
+          return {
+            id: w.id,
+            x: w.a[0] + dir[0] * c,
+            z: w.a[1] + dir[1] * c,
+            len,
+            thickness: w.thickness,
+            ang,
+          };
+        }),
+    [plan.walls],
+  );
+
+  const slabMat = useMemo(
+    () => new THREE.MeshStandardMaterial({ color: darkStage ? '#2d3038' : '#d5cfc4', roughness: 0.94 }),
+    [darkStage],
+  );
+
   const ceilingGeo = useMemo(() => {
     const g = new THREE.PlaneGeometry(bb.maxX - bb.minX + 40, bb.maxY - bb.minY + 40);
     g.rotateX(Math.PI / 2);
@@ -284,10 +331,27 @@ export function Room3D({ plan, finishes, wallMode, view, showCeiling }: Props) {
   const effMode = view === 'walk' ? 'full' : view === 'top' ? 'full' : wallMode;
   return (
     <group>
-      {/* ground outside */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[center.x, -1, center.y]} receiveShadow raycast={() => null}>
-        <planeGeometry args={[(bb.maxX - bb.minX) * 4 + 2000, (bb.maxY - bb.minY) * 4 + 2000]} />
-        <meshStandardMaterial color="#e7e2da" roughness={1} />
+      {/* architectural floor slab plinth matching room and wall footprint */}
+      {slabs.map((s) => (
+        <mesh key={'slab-' + s.id} geometry={s.g} material={slabMat} position={[0, -SLAB_H - 0.3, 0]} castShadow receiveShadow raycast={() => null} />
+      ))}
+      {wallPlinths.map((p) => (
+        <mesh
+          key={'wplinth-' + p.id}
+          position={[p.x, -(SLAB_H + 0.05) / 2 - 0.25, p.z]}
+          rotation={[0, -p.ang, 0]}
+          material={slabMat}
+          castShadow
+          receiveShadow
+          raycast={() => null}
+        >
+          <boxGeometry args={[p.len, SLAB_H + 0.05, p.thickness]} />
+        </mesh>
+      ))}
+      {/* transparent shadow catcher directly onto the studio backdrop */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[center.x, -SLAB_H - 0.4, center.y]} receiveShadow raycast={() => null}>
+        <planeGeometry args={[bb.maxX - bb.minX + 600, bb.maxY - bb.minY + 600]} />
+        <shadowMaterial transparent opacity={darkStage ? 0.34 : 0.14} color="#000000" depthWrite={false} />
       </mesh>
       {floors.map((f) => (
         <mesh key={f.id} geometry={f.g} material={f.mat} receiveShadow userData={{ floor: true }} />
