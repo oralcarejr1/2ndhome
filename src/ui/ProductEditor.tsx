@@ -1,7 +1,7 @@
 import { OrbitControls } from '@react-three/drei';
 import { Canvas } from '@react-three/fiber';
 import { ChevronDown, ChevronUp, Image as ImageIcon, Sparkles, Upload } from 'lucide-react';
-import { useEffect, useMemo, useState, type ClipboardEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CATEGORIES } from '../catalog/categories';
 import { fmtWon, uid } from '../lib/geometry';
 import { detectFormat, loadRaw, measureRaw } from '../lib/modelLoader';
@@ -160,11 +160,35 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
         const data = body as ImportedProduct;
         if (data.blocked) {
           setShowFallback(true);
-          setImportNote(
-            data.aiConfigured
-              ? '이 판매처는 자동 접근을 막고 있어요. 링크는 저장했으니 아래에 상품 페이지 텍스트를 붙여넣거나 사이즈표 캡처를 붙여넣어(Ctrl+V) 불러와 보세요.'
-              : '이 판매처는 자동 접근을 막고 있어요. 아래에 페이지 텍스트를 복사해 붙여넣거나, Vercel에 AI 키(GEMINI_API_KEY)를 연결하면 사이즈표 캡처·웹 조회도 가능해요.',
-          );
+          if (!data.aiConfigured) {
+            setImportNote(
+              '이 판매처는 자동 접근을 막고 있어요. 아래에 페이지 텍스트를 복사해 붙여넣거나, Vercel에 AI 키(GEMINI_API_KEY)를 연결하면 사이즈표 캡처·웹 조회도 가능해요.',
+            );
+          } else if (data.aiError === 'auth') {
+            setImportNote(
+              '판매처가 자동 접근을 막고 있고, Gemini API 키 인증에 실패했어요. Vercel의 GEMINI_API_KEY를 확인하거나 상품·사이즈표 캡처를 이 창에서 Ctrl+V 해보세요.',
+            );
+          } else if (data.aiError === 'quota') {
+            setImportNote(
+              '판매처가 자동 접근을 막고 있고, Gemini API 요청 한도에 도달했어요. 잠시 후 다시 시도하거나 아래에 상품 텍스트를 붙여넣어 불러와 보세요.',
+            );
+          } else if (data.aiError === 'model') {
+            setImportNote(
+              '판매처가 자동 접근을 막고 있고, 설정된 Gemini 모델 호출에 실패했어요(GEMINI_MODEL 확인). 아래에 상품 텍스트를 붙여넣어 불러와 보세요.',
+            );
+          } else if (data.aiError === 'tools_unavailable') {
+            setImportNote(
+              '이 판매처는 자동 접근을 막고 있어요(무료 Gemini 키는 Google 검색 대체 조회가 제한돼요). 상품 페이지 내용을 복사해 아래에 붙여넣거나, 상품·사이즈표 캡처를 이 창 아무 곳에서나 Ctrl+V 해보세요.',
+            );
+          } else if (data.aiError === 'timeout') {
+            setImportNote(
+              '판매처 응답 또는 AI 조회 시간이 초과되었어요. 다시 시도하거나 상품 페이지 텍스트·사이즈표 캡처를 이 창에서 바로 Ctrl+V 해보세요.',
+            );
+          } else {
+            setImportNote(
+              '이 판매처는 자동 접근을 막고 있어요. 링크는 저장했으니 아래에 상품 페이지 텍스트를 붙여넣거나, 상품·사이즈표 캡처를 이 창 아무 곳에서나 Ctrl+V 해보세요.',
+            );
+          }
           return;
         }
 
@@ -298,17 +322,20 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
     }
   };
 
-  const onFallbackPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = Array.from(e.clipboardData?.items ?? []);
-    const imgItem = items.find((it) => it.type.startsWith('image/'));
-    if (imgItem) {
+  useEffect(() => {
+    const onWindowPaste = (e: globalThis.ClipboardEvent) => {
+      if (loading) return;
+      const items = Array.from(e.clipboardData?.items ?? []);
+      const imgItem = items.find((it) => it.type.startsWith('image/'));
+      if (!imgItem) return;
       const blob = imgItem.getAsFile();
-      if (blob) {
-        e.preventDefault();
-        void importFromImageFile(blob);
-      }
-    }
-  };
+      if (!blob) return;
+      e.preventDefault();
+      void importFromImageFile(blob);
+    };
+    window.addEventListener('paste', onWindowPaste);
+    return () => window.removeEventListener('paste', onWindowPaste);
+  }, [loading, pageUrl, pasteText]);
 
   const applyOption = (opt: ImportedProductOption, idx: number) => {
     setActiveOptionIdx(idx);
@@ -472,15 +499,28 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
             </button>
 
             {showFallback && (
-              <div className="import-fallback-box">
+              <div
+                className="import-fallback-box"
+                onDragOver={(e) => {
+                  if (Array.from(e.dataTransfer?.items ?? []).some((it) => it.type.startsWith('image/'))) {
+                    e.preventDefault();
+                  }
+                }}
+                onDrop={(e) => {
+                  const file = Array.from(e.dataTransfer?.files ?? []).find((f) => f.type.startsWith('image/'));
+                  if (file && !loading) {
+                    e.preventDefault();
+                    void importFromImageFile(file);
+                  }
+                }}
+              >
                 <textarea
                   className="inp"
                   rows={3}
                   disabled={loading}
                   value={pasteText}
                   onChange={(e) => setPasteText(e.target.value)}
-                  onPaste={onFallbackPaste}
-                  placeholder="상품 페이지 내용을 복사해 붙여넣거나(Ctrl+A→C→V), 사이즈표 캡처 이미지를 여기에 바로 붙여넣으세요(Ctrl+V)"
+                  placeholder="상품 페이지 내용을 복사해 붙여넣거나(Ctrl+A→C→V), 상품·사이즈표 캡처 이미지를 이 창 아무 곳에서나 붙여넣으세요(Ctrl+V)"
                 />
                 <div className="import-fallback-acts">
                   <button type="button" className="btn-secondary" disabled={loading || !pasteText.trim()} onClick={importFromText}>

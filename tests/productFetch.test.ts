@@ -53,12 +53,13 @@ function serve(status: number, headers: Record<string, string>, body: string | B
 }
 
 describe('remote product page loading', () => {
-  it('pins DNS, sends browser headers without session cookies and decodes the product page', async () => {
+  it('pins DNS, sends well-formed client headers without session cookies and decodes the product page', async () => {
     serve(200, { 'content-type': 'text/html; charset=utf-8' }, '<title>테스트 소파</title>');
     expect(await readProductPage('https://shop.example/item')).toMatchObject({ name: '테스트 소파', category: 'sofa' });
     const headers = mocks.request.mock.calls[0][1].headers;
     expect(headers).not.toHaveProperty('cookie');
-    expect(headers['user-agent']).toContain('Mozilla/5.0');
+    expect(headers['user-agent']).toContain('2ndhome/1.0');
+    expect(headers['user-agent']).toContain('https://github.com/oralcarejr1/2ndhome');
     expect(headers['accept-language']).toContain('ko-KR');
     expect(headers['accept-encoding']).toContain('gzip');
   });
@@ -80,7 +81,49 @@ describe('remote product page loading', () => {
     });
   });
 
-  it('falls back to Ohouse canonical twin URL when primary URL is blocked', async () => {
+  it('parses Ohouse Next.js dehydratedState with nested price objects while ignoring recommended products', async () => {
+    const nextData = {
+      props: {
+        pageProps: {
+          dehydratedState: {
+            queries: [
+              {
+                queryKey: ['goods-detail', '3067204'],
+                state: {
+                  data: {
+                    recommendedProducts: [
+                      { name: '추천 쿠션', brand: { name: '다른브랜드' }, price: { representativeSellingPrice: 19900 } },
+                    ],
+                    goods: {
+                      goodsName: '[단독] 노르딕 오크 4인 식탁 1400',
+                      brand: { name: '레이디가구' },
+                      price: {
+                        representativeOriginalPrice: 520000,
+                        representativeSellingPrice: 369000,
+                      },
+                      productNotices: [{ title: '크기', description: 'W1400 x D800 x H740mm' }],
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    };
+    const html = `<html><head><title>오늘의집</title><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(nextData)}</script></head><body></body></html>`;
+    serve(200, { 'content-type': 'text/html; charset=utf-8' }, html);
+    const result = await readProductPage('https://store.ohou.se/goods/3067204');
+    expect(result).toMatchObject({
+      name: '노르딕 오크 4인 식탁 1400',
+      brand: '레이디가구',
+      price: 369000,
+      category: 'table',
+      dims: { w: 140, d: 80, h: 74 },
+    });
+  });
+
+  it('falls back to Ohouse canonical twin URL when primary URL is blocked, including after short-link redirects', async () => {
     serve(403, { 'content-type': 'text/html' });
     serve(
       200,
@@ -96,6 +139,24 @@ describe('remote product page loading', () => {
       dims: { w: 210, d: 95, h: 85 },
     });
     expect(mocks.request).toHaveBeenCalledTimes(2);
+
+    // Short-link redirect -> blocked tracked URL -> clean canonical URL retry
+    mocks.request.mockReset();
+    serve(302, { location: 'https://store.ohou.se/goods/777777?affect_type=Share&utm_source=app' });
+    serve(403, { 'content-type': 'text/html' });
+    serve(
+      200,
+      { 'content-type': 'text/html; charset=utf-8' },
+      '<title>[일룸] 로이 책상 1200 | 오늘의집</title><p>크기: 1200 x 600 x 720 mm</p><p>299,000원</p>',
+    );
+    const shortRes = await readProductPage('https://ozip.me/abc123');
+    expect(shortRes).toMatchObject({
+      url: 'https://store.ohou.se/goods/777777',
+      name: '로이 책상 1200',
+      brand: '일룸',
+      price: 299000,
+      dims: { w: 120, d: 60, h: 72 },
+    });
   });
 
   it('reports blocked pages cleanly instead of returning a bot challenge title', async () => {
@@ -193,12 +254,46 @@ describe('remote product page loading', () => {
       brand: '데스커',
       price: 189000,
       category: 'desk',
+      model: 'table',
+      ergo: 'desk',
       dims: { w: 140, d: 70, h: 72 },
       source: 'ai-web',
       aiConfigured: true,
     });
     const aiBody = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(aiBody.tools).toEqual([{ url_context: {} }, { google_search: {} }]);
+  });
+
+  it('surfaces diagnostic aiError when blocked store and Gemini free-tier fallback both fail', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    process.env.GEMINI_API_KEY = 'free-tier-key';
+    serve(403, { 'content-type': 'text/html' });
+    serve(403, { 'content-type': 'text/html' });
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () => '{"error":{"status":"INVALID_ARGUMENT","message":"google_search grounding is not available on the free tier"}}',
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          candidates: [{ content: { parts: [{ text: '{"name":null,"dims":{"w":null,"d":null,"h":null}}' }] } }],
+        }),
+      });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const res = await readProductPage('https://store.ohou.se/goods/666666');
+    expect(res).toEqual({
+      url: 'https://ohou.se/productions/666666/selling',
+      blocked: true,
+      aiConfigured: true,
+      aiError: 'tools_unavailable',
+    });
+    warnSpy.mockRestore();
   });
 
   it('rejects a redirect to a private destination before making another request', async () => {

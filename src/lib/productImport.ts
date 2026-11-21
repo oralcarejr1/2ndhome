@@ -6,6 +6,15 @@ export interface ImportedProductOption {
   price?: number;
 }
 
+export type AiErrorKind =
+  | 'auth'
+  | 'quota'
+  | 'model'
+  | 'tools_unavailable'
+  | 'timeout'
+  | 'not_found'
+  | 'unknown';
+
 export interface ImportedProduct {
   url?: string;
   name?: string;
@@ -22,6 +31,7 @@ export interface ImportedProduct {
   options?: ImportedProductOption[];
   source?: 'page' | 'page+ai' | 'ai-web' | 'text' | 'text+ai' | 'image+ai';
   aiConfigured?: boolean;
+  aiError?: AiErrorKind;
   blocked?: boolean;
 }
 
