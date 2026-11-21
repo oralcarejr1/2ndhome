@@ -47,7 +47,7 @@ npm run build      # dist/ 정적 파일 — 어디든 올리면 동작
 1. **Storage → Create → Blob** — 접근 방식을 고르라고 하면 **Private**. 만든 뒤 이 프로젝트(2ndhome)에 **Connect** (환경 변수 `BLOB_STORE_ID` 또는 `BLOB_READ_WRITE_TOKEN`이 자동으로 들어감 — 둘 다 지원)
 2. **Settings → Environment Variables** — `APP_PASSWORD` = 들어갈 때 쓸 비밀번호 (Production·Preview 모두)
 3. *(선택, 추천)* **판매 링크·사이즈표 캡처 AI 분석** — 오늘의집처럼 치수가 상세 이미지 안에만 있거나 자동 접근이 막힌 판매처까지 정확히 읽으려면 아래 중 하나를 Environment Variables에 추가하세요:
-   - `GEMINI_API_KEY` (추천: Google AI Studio, 이미지 치수 분석 + 차단된 URL 웹 조회 지원, 기본 모델 `gemini-3.8-flash`)
+   - `GEMINI_API_KEY` (추천: Google AI Studio, 이미지 치수 분석 + 차단된 URL 웹 조회 지원, 기본 모델 `gemini-4-hydrogen`)
    - `OPENAI_API_KEY` (기본 모델 `gpt-6-luna`)
    - `ANTHROPIC_API_KEY` (기본 모델 `claude-haiku-5-5`)
    - 모델 변경이 필요하면 `AI_MODEL`(또는 `GEMINI_MODEL` / `OPENAI_MODEL` / `ANTHROPIC_MODEL`)로 지정할 수 있어요.
