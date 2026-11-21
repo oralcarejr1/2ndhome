@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { CATEGORIES } from '../catalog/categories';
 import { uid } from '../lib/geometry';
 import { detectFormat, loadRaw, measureRaw } from '../lib/modelLoader';
+import { MODEL_FOR_CATEGORY, normalizeProductUrl, type ImportedProduct } from '../lib/productImport';
 import { MODELS, resolveMats, resolveParams } from '../models';
 import { buildPerson } from '../models/person';
 import { ItemModel } from '../scene/ItemMesh';
@@ -56,7 +57,7 @@ function Preview({ p, height }: { p: Product; height: number }) {
   );
 }
 
-export function ProductEditor({ base, onClose }: { base?: Product; onClose: () => void }) {
+export function ProductEditor({ base, importUrl, onClose }: { base?: Product; importUrl?: string; onClose: () => void }) {
   const project = useStore((s) => s.project)!;
   const upsertProduct = useStore((s) => s.upsertProduct);
   const startPlacing = useStore((s) => s.startPlacing);
@@ -79,8 +80,59 @@ export function ProductEditor({ base, onClose }: { base?: Product; onClose: () =
   );
   const [raw, setRaw] = useState<{ x: number; y: number; z: number } | null>(null);
   const [err, setErr] = useState('');
+  const [pageUrl, setPageUrl] = useState(importUrl ?? base?.url ?? '');
+  const [loading, setLoading] = useState(false);
+  const [importNote, setImportNote] = useState('');
+  const [needsDimensionCheck, setNeedsDimensionCheck] = useState(false);
+  const [dimensionChecked, setDimensionChecked] = useState(false);
+  const [importRequest, setImportRequest] = useState(() => importUrl ? { url: importUrl } : undefined);
   const def = MODELS[p.model];
   const height = project.profiles.find((x) => x.id === project.activeProfileId)?.height ?? 170;
+
+  useEffect(() => {
+    if (!importRequest) return;
+    const requestUrl = importRequest.url;
+    const controller = new AbortController();
+    setLoading(true);
+    setErr('');
+    setImportNote('');
+    setNeedsDimensionCheck(true);
+    setDimensionChecked(false);
+    setP((x) => ({ ...x, url: requestUrl }));
+    (async () => {
+      try {
+        const response = await fetch('/api/product', {
+          method: 'POST', headers: { 'content-type': 'application/json', 'x-2ndhome': '1' },
+          body: JSON.stringify({ url: requestUrl }), signal: controller.signal,
+        });
+        if (!response.ok) throw new Error('import_failed');
+        const data: ImportedProduct = await response.json();
+        if (controller.signal.aborted) return;
+        setP((x) => {
+          const model = !base && data.category ? MODEL_FOR_CATEGORY[data.category] ?? x.model : x.model;
+          const dims = { ...x.dims };
+          for (const axis of ['w', 'd', 'h'] as const) if (data.dims?.[axis] !== undefined) dims[axis] = data.dims[axis]!;
+          return { ...x, url: data.url, name: data.name ?? x.name, brand: data.brand ?? x.brand,
+            price: data.price ?? x.price, category: data.category ?? x.category, dims, model,
+            ...(model !== x.model ? { params: resolveParams({ model } as Product), mats: resolveMats({ model } as Product) } : {}) };
+        });
+        const missing = [!data.name && '제품명', !data.brand && '브랜드', data.price === undefined && '가격',
+          !data.category && '분류', !(['w', 'd', 'h'] as const).every((a) => data.dims?.[a] !== undefined) && '치수'].filter(Boolean);
+        setImportNote(missing.length ? `불러왔어요. ${missing.join('·')} 정보는 직접 확인해 주세요. 읽지 못한 치수에는 현재 입력값이 남아 있어요.` : '상품 정보를 불러왔어요. 선택한 옵션의 치수와 가격이 맞는지 확인해 주세요.');
+      } catch {
+        if (!controller.signal.aborted) setImportNote('판매처에서 정보를 읽지 못했어요. 링크는 입력했으니 제품명과 치수를 직접 입력해 후보로 저장할 수 있어요.');
+      } finally { if (!controller.signal.aborted) setLoading(false); }
+    })();
+    return () => controller.abort();
+  }, [importRequest]);
+
+  const importPage = () => {
+    try {
+      const url = normalizeProductUrl(pageUrl);
+      setErr('');
+      setImportRequest({ url });
+    } catch { setErr('판매 페이지의 전체 주소(http 또는 https)를 입력하세요'); }
+  };
 
   useEffect(() => {
     if (!p.asset) return setRaw(null);
@@ -106,8 +158,15 @@ export function ProductEditor({ base, onClose }: { base?: Product; onClose: () =
   };
 
   const save = (place: boolean) => {
+    if (loading) return;
     if (!p.name.trim()) return setErr('제품 이름을 입력하세요');
+    if (needsDimensionCheck && !dimensionChecked) return setErr('판매 페이지에서 치수를 확인하고 확인란을 체크하세요');
+    if (Object.values(p.dims).some((n) => !Number.isFinite(n) || n < 0.5)) return setErr('치수는 0.5cm 이상으로 입력하세요');
+    try { if (p.url) normalizeProductUrl(p.url); } catch { return setErr('판매 링크 주소를 확인하세요'); }
     upsertProduct({ ...p, name: p.name.trim(), brand: p.brand.trim() || '직접 입력' });
+    if (!editing) useStore.getState().mutate((draft) => {
+      if (!draft.shortlist.includes(p.id)) draft.shortlist.push(p.id);
+    }, false);
     notify(editing ? '제품을 수정했어요' : '내 제품으로 저장했어요 — 카탈로그 "내가 추가"에 있어요');
     if (place) startPlacing(p.id);
     onClose();
@@ -134,10 +193,10 @@ export function ProductEditor({ base, onClose }: { base?: Product; onClose: () =
           <button className="btn-secondary" onClick={onClose}>
             취소
           </button>
-          <button className="btn-secondary" onClick={() => save(false)}>
+          <button className="btn-secondary" disabled={loading} onClick={() => save(false)}>
             저장
           </button>
-          <button className="btn-primary" onClick={() => save(true)}>
+          <button className="btn-primary" disabled={loading} onClick={() => save(true)}>
             저장하고 배치
           </button>
         </>
@@ -145,6 +204,14 @@ export function ProductEditor({ base, onClose }: { base?: Product; onClose: () =
     >
       <div className="pe-grid">
         <div>
+          <div className="product-link-form">
+            <label htmlFor="editor-product-url">판매 페이지에서 정보 불러오기</label>
+            <div className="product-link-row">
+              <input id="editor-product-url" className="inp" type="url" placeholder="https://판매 페이지 주소" value={pageUrl} disabled={loading} onChange={(e) => setPageUrl(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); importPage(); } }} />
+              <button className="btn-secondary" disabled={loading || !pageUrl.trim()} onClick={importPage}>{loading ? '불러오는 중…' : '불러오기'}</button>
+            </div>
+            <p className="note" role="status">{loading ? '판매 페이지에서 상품 정보를 읽고 있어요…' : importNote || '제품명·브랜드·원화 가격·치수를 가능한 만큼 채워요.'}</p>
+          </div>
           <div className="callout info">판매 페이지의 <b>제품 크기(가로×깊이×높이)</b>를 그대로 넣으세요. 형태를 고르고 세부(좌면 높이, 팔걸이, 다리, 서랍 수 등)를 맞추면 실제 제품과 같은 비례의 3D가 만들어져요. 제조사 3D 파일(GLB/OBJ/FBX/STL)이 있으면 올려서 그대로 쓸 수도 있어요.</div>
           <div className="grid2">
             <Field label="제품 이름 *">
@@ -190,6 +257,10 @@ export function ProductEditor({ base, onClose }: { base?: Product; onClose: () =
               <Num value={p.dims.h} unit="cm" min={0.5} onChange={(h) => setP({ ...p, dims: { ...p.dims, h } })} />
             </Field>
           </div>
+          {needsDimensionCheck && <label className="check">
+            <input type="checkbox" checked={dimensionChecked} onChange={(e) => setDimensionChecked(e.target.checked)} />
+            판매 페이지에서 선택한 옵션의 가로·깊이·높이를 확인했어요
+          </label>}
           <div className="grid3" style={{ marginTop: 6 }}>
             <Field label="설치">
               <select className="inp" value={p.mount ?? 'floor'} onChange={(e) => setP({ ...p, mount: e.target.value as Mount })}>
@@ -330,3 +401,4 @@ export function ProductEditor({ base, onClose }: { base?: Product; onClose: () =
     </Modal>
   );
 }
+
