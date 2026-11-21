@@ -28,8 +28,10 @@ export async function readProductPage(input: string, signal = AbortSignal.timeou
       const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
       const req = request(url, {
         signal,
-        autoSelectFamily: false,
-        lookup: (_hostname, _options, callback) => callback(null, addresses[0].address, 4),
+        family: 4,
+        lookup: (_hostname, options, callback) => options.all
+          ? callback(null, [{ address: addresses[0].address, family: 4 }])
+          : callback(null, addresses[0].address, 4),
         headers: { 'user-agent': '2ndhome Product Import', accept: 'text/html, application/xhtml+xml', 'accept-encoding': 'identity' },
       }, (res) => {
         const status = res.statusCode ?? 500;
@@ -129,6 +131,6 @@ export function parseProductPage(html: string, url: string): ImportedProduct {
     ['storage', /수납|서랍|옷장|캐비닛|cabinet|wardrobe/i], ['lighting', /조명|스탠드|\blamp\b/i], ['textile', /러그|카펫|커튼|\brug\b/i],
   ];
   const category = categories.find(([, pattern]) => pattern.test(`${p.category ?? ''} ${name ?? ''}`))?.[0];
-  return { url, name, brand, category, ...(currency?.toUpperCase() === 'KRW' && Number.isFinite(price) && price > 0 ? { price } : {}),
+  return { url, name, brand, category, ...(typeof currency === 'string' && currency.toUpperCase() === 'KRW' && Number.isFinite(price) && price > 0 ? { price } : {}),
     ...(Object.values(dims).some((v) => v !== undefined) ? { dims } : {}) };
 }
