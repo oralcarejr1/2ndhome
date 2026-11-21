@@ -851,11 +851,14 @@ function SelectionOverlay({ project, version }: { project: Project; version: Ver
   const selection = useStore((s) => s.selection);
   const show = useStore((s) => s.show);
   const view = useStore((s) => s.view);
+  const theme = useStore((s) => s.theme);
   const id = selection.length === 1 && view !== 'walk' ? selection[0] : null;
   const it = id ? version.items.find((i) => i.id === id) : null;
   const prod = it ? getProduct(it.productId, project) : null;
   const gaps = useMemo(() => (it && show.dims ? sideGaps(project, version, it.id) : []), [it, project, version, show.dims]);
   if (!it || !prod) return null;
+  const accent = theme === 'dark' ? '#4d8dff' : '#1d57c4';
+  const warnColor = theme === 'dark' ? '#e8a838' : '#b45309';
   const dims = itemDimsOf(it, prod);
   const r = Math.max(dims.w, dims.d) / 2 + 22;
   const y = it.y + 1;
@@ -869,15 +872,15 @@ function SelectionOverlay({ project, version }: { project: Project; version: Ver
         <group position={[it.x, y, it.z]}>
           <mesh rotation={[-Math.PI / 2, 0, 0]} userData={{ ui: true }} onPointerDown={(e) => { e.stopPropagation(); interactionApi.startRotate(e, it.id); }}>
             <ringGeometry args={[r - 4, r + 4, 64]} />
-            <meshBasicMaterial color="#2f6fed" transparent opacity={0.0} depthWrite={false} />
+            <meshBasicMaterial color={accent} transparent opacity={0.0} depthWrite={false} />
           </mesh>
           <mesh rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
             <ringGeometry args={[r - 0.8, r + 0.8, 64]} />
-            <meshBasicMaterial color="#2f6fed" transparent opacity={0.55} depthWrite={false} />
+            <meshBasicMaterial color={accent} transparent opacity={0.62} depthWrite={false} />
           </mesh>
           <mesh position={[Math.sin(deg2rad(it.rot)) * r, 0, Math.cos(deg2rad(it.rot)) * r]} userData={{ ui: true }} onPointerDown={(e) => { e.stopPropagation(); interactionApi.startRotate(e, it.id); }}>
             <sphereGeometry args={[6, 16, 12]} />
-            <meshBasicMaterial color="#2f6fed" />
+            <meshBasicMaterial color={accent} />
           </mesh>
         </group>
       )}
@@ -893,7 +896,7 @@ function SelectionOverlay({ project, version }: { project: Project; version: Ver
             <div className="tag3d dim">H {Math.round(dims.h)}{it.y > 0.5 ? ` · 바닥+${Math.round(it.y)}` : ''}</div>
           </Html>
           {gaps.map((g) => {
-            const color = g.dist < 60 && g.dist >= 2 ? '#f08c00' : '#2f6fed';
+            const color = g.dist < 60 && g.dist >= 2 ? warnColor : accent;
             const mid: [number, number, number] = [(g.from[0] + g.to[0]) / 2, y + 2, (g.from[1] + g.to[1]) / 2];
             if (g.dist < 1) return null;
             return (
@@ -988,24 +991,28 @@ function Guides() {
 function GhostLayer({ project }: { project: Project }) {
   const placing = useStore((s) => s.placing);
   const placingPerson = useStore((s) => s.placingPerson);
+  const theme = useStore((s) => s.theme);
   const ghost = useScene((s) => s.ghost);
   const prod = placing ? getProduct(placing.productId, project) : null;
   const tmp = useMemo(() => (prod ? ({ id: '_g', productId: prod.id, x: 0, z: 0, y: 0, rot: 0, dims: placing?.dims, params: placing?.params } as PlacedItem) : undefined), [prod, placing]);
   const profile = project.profiles.find((p) => p.id === project.activeProfileId) ?? project.profiles[0];
-  const personObj = useMemo(() => (placingPerson ? buildPerson(profile?.height ?? 170, placingPerson, '#2f6fed', 45) : null), [placingPerson, profile?.height]);
+  const accent = theme === 'dark' ? '#4d8dff' : '#1d57c4';
+  const personObj = useMemo(() => (placingPerson ? buildPerson(profile?.height ?? 170, placingPerson, accent, 45) : null), [placingPerson, profile?.height, accent]);
   if (!ghost) return null;
   if (personObj) return <primitive object={personObj} position={[ghost.x, 0, ghost.z]} />;
   if (!prod || !tmp) return null;
   return (
     <group position={[ghost.x, ghost.y, ghost.z]} rotation={[0, deg2rad(ghost.rot), 0]}>
       <ItemModel item={tmp} prod={prod} ghost />
-      <Footprint w={(placing?.dims ?? prod.dims).w} d={(placing?.dims ?? prod.dims).d} color="#2f6fed" opacity={0.25} y={-ghost.y + 0.8} />
+      <Footprint w={(placing?.dims ?? prod.dims).w} d={(placing?.dims ?? prod.dims).d} color={accent} opacity={0.25} y={-ghost.y + 0.8} />
     </group>
   );
 }
 
 function Measures() {
   const { measures, measureStart, measureHover } = useScene();
+  const theme = useStore((s) => s.theme);
+  const accent = theme === 'dark' ? '#4d8dff' : '#1d57c4';
   const all = [...measures];
   if (measureStart && measureHover) all.push({ a: measureStart, b: measureHover });
   return (
@@ -1014,7 +1021,7 @@ function Measures() {
         const d = Math.hypot(m.a[0] - m.b[0], m.a[1] - m.b[1], m.a[2] - m.b[2]);
         return (
           <group key={i}>
-            <Line points={[m.a, m.b]} color="#7c4dff" lineWidth={2} depthTest={false} />
+            <Line points={[m.a, m.b]} color={accent} lineWidth={2} depthTest={false} />
             <Html position={[(m.a[0] + m.b[0]) / 2, (m.a[1] + m.b[1]) / 2 + 4, (m.a[2] + m.b[2]) / 2]} center style={{ pointerEvents: 'none' }}>
               <div className="tag3d measure">{Math.round(d)}cm</div>
             </Html>
@@ -1024,7 +1031,7 @@ function Measures() {
       {measureStart && (
         <mesh position={measureStart}>
           <sphereGeometry args={[2.5, 12, 8]} />
-          <meshBasicMaterial color="#7c4dff" />
+          <meshBasicMaterial color={accent} />
         </mesh>
       )}
     </>
@@ -1144,10 +1151,12 @@ function CameraRig({ project, version }: { project: Project; version: Version })
 
 function FloorGrid({ project }: { project: Project }) {
   const on = useStore((s) => s.show.grid);
+  const theme = useStore((s) => s.theme);
   if (!on) return null;
   const b = planBounds(project);
   const size = Math.ceil(Math.max(b.maxX - b.minX, b.maxY - b.minY) / 50) * 50 + 100;
-  return <gridHelper args={[size, size / 50, '#b9b0a3', '#d7cfc3']} position={[(b.minX + b.maxX) / 2, 0.5, (b.minY + b.maxY) / 2]} />;
+  const [c1, c2] = theme === 'dark' ? ['#3a3e47', '#2b2e36'] : ['#beb7ac', '#dbd5cb'];
+  return <gridHelper key={theme} args={[size, size / 50, c1, c2]} position={[(b.minX + b.maxX) / 2, 0.5, (b.minY + b.maxY) / 2]} />;
 }
 
 function AutoThumb({ version }: { version: Version }) {
@@ -1213,9 +1222,12 @@ export function Viewport() {
   const project = useStore((s) => s.project);
   const view = useStore((s) => s.view);
   const show = useStore((s) => s.show);
+  const theme = useStore((s) => s.theme);
   const version = activeVersion(project);
   const issues = useMemo(() => (project && version ? computeIssues(project, version) : new Map()), [project?.plan, version, project?.customProducts]);
   if (!project || !version) return null;
+  const day = version.finishes.hour > 6 && version.finishes.hour < 19;
+  const bg = theme === 'dark' ? (day ? '#1f2126' : '#14161b') : day ? '#ece8e0' : '#1e222b';
   return (
     <div
       className="canvas-wrap"
@@ -1236,7 +1248,7 @@ export function Viewport() {
       }}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <color attach="background" args={[version.finishes.hour > 6 && version.finishes.hour < 19 ? '#ece8e1' : '#1d2230']} />
+      <color attach="background" args={[bg]} />
       <Suspense fallback={null}>
         <Env />
         <Lights project={project} version={version} />
