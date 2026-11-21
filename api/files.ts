@@ -19,13 +19,13 @@ export default {
         const type = SAFE_TYPES.test(t) ? t : 'application/octet-stream';
         const rnd = crypto.getRandomValues(new Uint8Array(12));
         const id = 'f' + Date.now().toString(36) + [...rnd].map((b) => b.toString(16).padStart(2, '0')).join('');
-        await storage().write(filePath(id), body, type);
+        await storage(req).write(filePath(id), body, type);
         return json({ id });
       }
       if (req.method === 'GET') {
         const id = new URL(req.url).searchParams.get('id');
         if (!validId(id)) return json({ error: 'bad_id' }, 400);
-        const f = await storage().read(filePath(id), false);
+        const f = await storage(req).read(filePath(id), false);
         if (!f) return json({ error: 'not_found' }, 404);
         return new Response(f.body, {
           headers: {
