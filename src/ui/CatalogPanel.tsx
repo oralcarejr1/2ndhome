@@ -1,4 +1,4 @@
-import { ExternalLink, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
+import { Box, ExternalLink, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CATEGORIES } from '../catalog/categories';
 import { PRODUCTS, productSearchUrl } from '../catalog/products';
@@ -31,7 +31,7 @@ export function Thumb({ p, size = 64 }: { p: Product; size?: number }) {
   }, [p]);
   return (
     <div className="catalog-thumb" ref={ref} style={{ width: size, height: size }}>
-      {url ? <img src={url} alt="" /> : <span>{CATEGORIES.find((c) => c.id === p.category)?.icon}</span>}
+      {url ? <img src={url} alt="" /> : <Box size={24} strokeWidth={1.5} aria-hidden="true" />}
     </div>
   );
 }
@@ -94,7 +94,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
 
   const chips: [Filter, string][] = [
     ['all', '전체'],
-    ['star', `★ 후보 ${shortlist.length || ''}`],
+    ['star', `후보${shortlist.length ? ` ${shortlist.length}` : ''}`],
     ...listTags.map((t) => [`tag:${t}`, t] as [Filter, string]),
     ['mine', '직접 등록'],
     ...CATEGORIES.map((c) => [c.id, c.label] as [Filter, string]),
@@ -112,7 +112,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
             onCustom(undefined, url);
           } catch { setUrlError('판매 페이지의 전체 주소(http 또는 https)를 입력하세요'); }
         }}>
-          <label htmlFor="catalog-product-url">판매 페이지로 후보 추가</label>
+          <label htmlFor="catalog-product-url">판매 링크로 후보 추가</label>
           <div className="product-link-row">
             <input id="catalog-product-url" className="inp" type="url" required placeholder="https://판매 페이지 주소" value={pageUrl} onChange={(e) => { setPageUrl(e.target.value); setUrlError(''); }} />
             <button className="btn-secondary" type="submit"><Plus size={14} /> 불러오기</button>
@@ -126,17 +126,18 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
           </div>
         </div>
         <button className="btn-secondary btn-register" onClick={() => onCustom()} title="판매 페이지의 치수·색·가격이나 제조사 3D 파일로 내 후보 만들기">
-          <Plus size={14} /> 구매 후보 직접 등록
+          <Plus size={14} /> 후보 직접 등록
         </button>
       </div>
       <div className="cat-chips cat-scroll">
         {chips.map(([id, label]) => (
-          <button key={id} className={'chip sm' + (cat === id ? (id === 'star' ? ' chip-star active' : ' active') : '')} onClick={() => setCat(id)}>
+          <button key={id} className={'chip sm' + (cat === id ? (id === 'star' ? ' chip-star active' : ' active') : '')} aria-pressed={cat === id} onClick={() => setCat(id)}>
+            {id === 'star' && <Star size={16} aria-hidden="true" />}
             {label}
           </button>
         ))}
       </div>
-      <div className="row" style={{ marginTop: -4 }}>
+      <div className="row catalog-filters">
         <select className="brand-select" value={brand} onChange={(e) => setBrand(e.target.value)}>
           <option value="">모든 브랜드 ({list.length}개)</option>
           {brands.map((b) => (
@@ -146,7 +147,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
           ))}
         </select>
       </div>
-      {cat === 'star' && !list.length && <div className="empty-hint">☆를 눌러 마음에 드는 가구를 후보로 모아 보세요.</div>}
+      {cat === 'star' && !list.length && <div className="empty-hint">가구의 별 버튼을 눌러 후보를 모으세요</div>}
       <div className="catalog-list">
         {list.map((p) => {
           const starred = shortlist.includes(p.id);
@@ -158,7 +159,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
                   <span className="catalog-brand">{p.brand}</span>
                   <ProductTags p={p} />
                 </div>
-                <button className={'icon-star' + (starred ? ' on' : '')} title="후보에 담기" onClick={() => toggleStar(p.id)}>
+                <button className={'icon-star' + (starred ? ' on' : '')} title={starred ? '후보에서 빼기' : '후보에 담기'} aria-label={`${p.name} ${starred ? '후보에서 빼기' : '후보에 담기'}`} aria-pressed={starred} onClick={() => toggleStar(p.id)}>
                   <Star size={15} fill={starred ? 'currentColor' : 'none'} />
                 </button>
               </div>
@@ -178,7 +179,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
                 </div>
               </div>
               {p.variants && p.variants.length > 1 && (
-                <div className="mini-swatches" style={{ marginTop: 6 }}>
+                <div className="mini-swatches" style={{ marginTop: 8 }}>
                   {p.variants.map((v) => (
                     <span key={v.name} className="mini-swatch" title={v.name} style={{ background: Object.values(v.mats)[0]?.color }} />
                   ))}
@@ -214,7 +215,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
         })}
       </div>
       <p className="mini-note" style={{ marginTop: 12 }}>
-        배치하기를 누르면 알맞은 자리에 놓여요. 배치 후 드래그해서 위치를 조정하세요. <b>근사값</b> 표시 제품은 구매 전 판매처 치수를 확인하세요.
+        배치한 가구는 드래그해서 위치를 조정할 수 있어요. <b>근사값</b> 제품은 구매 전 판매처 치수를 확인하세요.
       </p>
     </div>
   );
