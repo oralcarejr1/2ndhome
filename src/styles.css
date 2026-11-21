@@ -2991,7 +2991,7 @@ textarea:focus-visible {
     flex-basis: 100%;
     justify-content: center;
   }
-  .header-actions .hide-m { display: none; }
+  .header-actions { flex-wrap: wrap; gap: 4px; }
 }
 @media (max-width: 760px) {
   .mode-switcher button { min-height: 40px; }
