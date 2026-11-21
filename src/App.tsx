@@ -271,14 +271,14 @@ function Header({ onVersions, splitMood, onSplitMood, onHelp }: { leftTab: LeftT
         <button className="icon-pill" disabled={!future} onClick={redo} title="다시 실행 (Cmd+Shift+Z)">
           <Redo2 size={15} />
         </button>
-        <button className="icon-pill" onClick={cycle} title="채광·시간대 전환 (아침/낮/노을/밤)">
+        <button className="icon-pill hide-m" onClick={cycle} title="채광·시간대 전환 (아침/낮/노을/밤)" aria-label="채광·시간대 전환">
           {cur === 'morning' && <Sunrise size={15} />}
           {cur === 'noon' && <Sun size={15} />}
           {cur === 'golden' && <Sunset size={15} />}
           {cur === 'night' && <Moon size={15} />}
         </button>
         <button
-          className={'pill-toggle' + (show.people && avatar ? ' on' : '')}
+          className={'pill-toggle hide-m' + (show.people && avatar ? ' on' : '')}
           onClick={() => (avatar ? setShow({ people: !show.people }) : updateAvatar({}))}
           title="실제 사람 사이즈 아바타 표시"
         >

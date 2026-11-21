@@ -1,20 +1,26 @@
 import {
   AlertTriangle,
+  BedDouble,
   Camera,
   Check,
   CheckCircle2,
   Columns2,
+  CookingPot,
   Copy,
+  DoorOpen,
   Download,
   Eye,
   EyeOff,
   FolderOpen,
   Footprints,
   Info,
+  Laptop,
   Lock,
   MapPin,
   Plus,
   Save,
+  Shirt,
+  Sofa,
   Trash2,
   Upload,
   User,
@@ -166,13 +172,13 @@ const POSES: { id: Pose; label: string }[] = [
   { id: 'reach', label: '팔 뻗기' },
 ];
 
-const SCENARIOS: [Scenario, string][] = [
-  ['entry', '🚪 현관에서 들어올 때'],
-  ['sofa', '🛋️ 소파에 앉았을 때'],
-  ['bed', '🛏️ 침대에 누웠을 때'],
-  ['desk', '💻 붙박이 책상 앉기'],
-  ['kitchen', '🍳 주방에서 요리할 때'],
-  ['wardrobe', '👔 붙박이장 옷 꺼내기'],
+const SCENARIOS: [Scenario, string, typeof DoorOpen][] = [
+  ['entry', '현관에서 들어올 때', DoorOpen],
+  ['sofa', '소파에 앉았을 때', Sofa],
+  ['bed', '침대에 누웠을 때', BedDouble],
+  ['desk', '책상에 앉았을 때', Laptop],
+  ['kitchen', '주방에서 요리할 때', CookingPot],
+  ['wardrobe', '옷장에서 옷 꺼낼 때', Shirt],
 ];
 
 export function HumanPanel() {
@@ -304,9 +310,9 @@ export function HumanPanel() {
       <div className="insp-section">
         <div className="insp-label">생활 동선 시점 바로가기 (클릭 시 1인칭 이동)</div>
         <div className="scenario-grid">
-          {SCENARIOS.map(([id, label]) => (
+          {SCENARIOS.map(([id, label, Icon]) => (
             <button key={id} className="scenario-btn" onClick={() => runScenario(id)}>
-              {label}
+              <Icon size={14} strokeWidth={1.8} /> {label}
             </button>
           ))}
         </div>

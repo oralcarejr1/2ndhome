@@ -2,6 +2,8 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { useStore } from './store/store';
+// Pretendard (OFL): bundled, loaded per Unicode subset so a page fetches only the glyphs it shows
+import 'pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css';
 import './styles.css';
 
 // dev-only handle for the browser tests (not in production builds)

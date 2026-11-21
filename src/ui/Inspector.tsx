@@ -50,6 +50,7 @@ export const FLOORS: { v: FloorKind; l: string; c: string }[] = [
   { v: 'bigtile', l: '포세린 베이지', c: '#e9e3d9' },
   { v: 'tile', l: '타일 60', c: '#dedbd6' },
   { v: 'vinyl', l: '장판(우드)', c: '#d9c29d' },
+  { v: 'decotile', l: '데코타일 블랙(유광)', c: '#262524' },
   { v: 'concrete', l: '콘크리트', c: '#c9c8c4' },
   { v: 'terrazzo', l: '테라조', c: '#ebe6df' },
   { v: 'carpet', l: '카펫', c: '#c9c0b3' },

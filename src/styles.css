@@ -7,7 +7,7 @@
   --border-strong: #d5cdc0;
   --ink: #1e1c19;
   --ink-2: #57524b;
-  --ink-3: #8c857b;
+  --ink-3: #756e64;
   --accent: #2b62d9;
   --accent-soft: #eaf0fd;
   --sage: #3b6e5c;
@@ -19,7 +19,8 @@
   --bad-bg: #fef0f0;
   --good: #1f7a4c;
   --good-bg: #ebf7f0;
-  --radius: 10px;
+  --radius: 12px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
   --shadow-sm: 0 1px 3px rgba(30, 28, 25, 0.06);
   --shadow-md: 0 6px 24px rgba(30, 28, 25, 0.12);
 }
@@ -38,9 +39,12 @@ body,
   overflow: hidden;
   background: var(--bg);
   color: var(--ink);
-  font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
+  font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
     'Noto Sans KR', sans-serif;
+  font-size: 13px;
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button,
@@ -52,8 +56,10 @@ textarea {
 }
 
 .mono {
+  /* numbers line up without switching to a code font next to Korean text */
   font-variant-numeric: tabular-nums;
-  font-family: ui-monospace, 'SF Mono', Menlo, monospace;
+  font-feature-settings: 'tnum';
+  letter-spacing: 0;
 }
 
 /* ==================== LAYOUT SHELL ==================== */
@@ -87,7 +93,7 @@ textarea {
 .brand-mark {
   width: 34px;
   height: 34px;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--ink);
   color: #fff;
   font-weight: 800;
@@ -107,7 +113,7 @@ textarea {
 }
 
 .brand-meta {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-3);
   white-space: nowrap;
 }
@@ -119,7 +125,7 @@ textarea {
   display: flex;
   background: var(--bg);
   padding: 3px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   gap: 2px;
 }
@@ -128,8 +134,8 @@ textarea {
   border: 0;
   background: transparent;
   padding: 6px 12px;
-  border-radius: 7px;
-  font-size: 12.5px;
+  border-radius: 8px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--ink-2);
   cursor: pointer;
@@ -261,7 +267,7 @@ textarea {
   border: 0;
   background: none;
   padding: 9px 4px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink-3);
   border-bottom: 2px solid transparent;
@@ -352,7 +358,7 @@ textarea {
   border: 0;
   background: transparent;
   padding: 6px 10px;
-  border-radius: 7px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
   color: var(--ink-2);
@@ -379,7 +385,7 @@ textarea {
   border-radius: 999px;
   background: rgba(30, 28, 25, 0.72);
   color: rgba(255, 255, 255, 0.92);
-  font-size: 11.5px;
+  font-size: 12px;
   pointer-events: none;
   white-space: nowrap;
 }
@@ -393,7 +399,7 @@ textarea {
   backdrop-filter: blur(12px);
   color: #fff;
   padding: 12px 16px;
-  border-radius: 14px;
+  border-radius: 12px;
   box-shadow: var(--shadow-md);
   display: flex;
   flex-direction: column;
@@ -410,7 +416,7 @@ textarea {
   font-weight: 700;
 }
 .pov-hud-sub {
-  font-size: 11.5px;
+  font-size: 12px;
   color: rgba(255, 255, 255, 0.78);
 }
 .pov-hud-btns {
@@ -423,8 +429,8 @@ textarea {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
   padding: 5px 10px;
-  border-radius: 7px;
-  font-size: 11.5px;
+  border-radius: 8px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -446,7 +452,7 @@ textarea {
   color: #fff;
   padding: 9px 16px;
   border-radius: 999px;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 500;
   box-shadow: var(--shadow-md);
   pointer-events: none;
@@ -476,7 +482,7 @@ textarea {
   gap: 4px;
   background: rgba(255, 255, 255, 0.92);
   padding: 4px;
-  border-radius: 10px;
+  border-radius: 12px;
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
 }
@@ -484,8 +490,8 @@ textarea {
   border: 0;
   background: transparent;
   padding: 6px 10px;
-  border-radius: 7px;
-  font-size: 12.5px;
+  border-radius: 8px;
+  font-size: 13px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -507,7 +513,7 @@ textarea {
   gap: 7px;
   padding: 0 10px;
   height: 36px;
-  border-radius: 9px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface-soft);
 }
@@ -516,7 +522,7 @@ textarea {
   background: transparent;
   outline: none;
   width: 100%;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .muted-icon {
   color: var(--ink-3);
@@ -526,11 +532,11 @@ textarea {
 .btn-primary {
   height: 35px;
   padding: 0 12px;
-  border-radius: 9px;
+  border-radius: 8px;
   border: 0;
   background: var(--ink);
   color: #fff;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
@@ -584,11 +590,11 @@ textarea {
 .btn-compare {
   height: 36px;
   padding: 0 12px;
-  border-radius: 9px;
+  border-radius: 8px;
   border: 1px solid #c3d4f7;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -634,10 +640,10 @@ textarea {
 .btn-sm {
   height: 30px;
   padding: 0 8px;
-  border-radius: 7px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   display: inline-flex;
   align-items: center;
@@ -666,7 +672,7 @@ textarea {
   border-radius: 999px;
   border: 1px solid var(--border);
   background: var(--surface);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink-2);
   cursor: pointer;
@@ -696,12 +702,13 @@ textarea {
 .catalog-card {
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 10px;
+  padding: 12px;
   background: var(--surface);
-  transition: border-color 0.15s;
+  transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease), transform 0.16s var(--ease);
 }
 .catalog-card:hover {
   border-color: var(--border-strong);
+  box-shadow: var(--shadow-sm);
 }
 
 .catalog-card-head {
@@ -719,7 +726,7 @@ textarea {
 .color-dot {
   width: 11px;
   height: 11px;
-  border-radius: 3px;
+  border-radius: 6px;
   border: 1px solid rgba(0, 0, 0, 0.15);
   flex-shrink: 0;
 }
@@ -733,9 +740,9 @@ textarea {
 }
 
 .badge-custom {
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 700;
@@ -744,9 +751,9 @@ textarea {
   gap: 2px;
 }
 .badge-mount {
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 6px;
   font-weight: 600;
   background: var(--bg);
   color: var(--ink-2);
@@ -786,17 +793,17 @@ textarea {
   align-items: center;
   justify-content: space-between;
   margin-top: 4px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-2);
 }
 .price-tag {
   font-weight: 700;
   color: var(--ink);
-  font-size: 11.5px;
+  font-size: 12px;
 }
 .catalog-desc {
   margin: 5px 0 7px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.45;
   color: var(--ink-3);
 }
@@ -809,7 +816,7 @@ textarea {
 .mini-swatch {
   width: 14px;
   height: 14px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid rgba(0, 0, 0, 0.14);
 }
 
@@ -819,10 +826,10 @@ textarea {
 }
 .btn-place {
   flex: 1;
-  height: 30px;
-  border-radius: 7px;
-  border: 1px solid var(--border-strong);
-  background: var(--surface-soft);
+  height: 32px;
+  border-radius: 8px;
+  border: 0;
+  background: var(--surface-hover);
   font-size: 12px;
   font-weight: 600;
   color: var(--ink);
@@ -839,11 +846,11 @@ textarea {
 }
 
 .btn-link-icon {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: var(--surface);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 0;
+  background: transparent;
   color: var(--ink-2);
   display: flex;
   align-items: center;
@@ -881,7 +888,7 @@ textarea {
 }
 
 .list-group-head {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--ink-3);
   margin-bottom: 7px;
@@ -898,7 +905,7 @@ textarea {
   align-items: center;
   gap: 8px;
   padding: 8px 9px;
-  border-radius: 9px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
   cursor: pointer;
@@ -924,7 +931,7 @@ textarea {
   min-width: 0;
 }
 .placed-name {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
   display: flex;
   align-items: center;
@@ -983,7 +990,7 @@ textarea {
 }
 .insp-sub {
   margin: 4px 0 0;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-3);
   line-height: 1.45;
 }
@@ -998,7 +1005,7 @@ textarea {
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 6px 8px;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
   background: var(--surface-soft);
 }
@@ -1013,7 +1020,7 @@ textarea {
   font-size: 11px;
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: 5px;
+  border-radius: 6px;
   background: var(--bg);
   color: var(--ink-2);
 }
@@ -1051,11 +1058,11 @@ textarea {
 }
 .gap-readout span {
   display: block;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 .gap-readout b {
-  font-size: 11.5px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1065,7 +1072,7 @@ textarea {
   border-top: 1px solid var(--border);
 }
 .insp-label {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--ink-2);
   display: flex;
@@ -1116,7 +1123,7 @@ textarea {
   text-overflow: ellipsis;
 }
 .swap-sub {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 
@@ -1131,14 +1138,14 @@ textarea {
   gap: 3px;
 }
 .dim-grid-3 span {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 .dim-grid-3 input {
   width: 100%;
   padding: 6px 7px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   font-size: 13px;
   font-weight: 600;
 }
@@ -1165,7 +1172,7 @@ textarea {
 
 .seg-btn {
   padding: 6px 4px;
-  border-radius: 7px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
   font-size: 11px;
@@ -1187,7 +1194,7 @@ textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11.5px;
+  font-size: 12px;
   cursor: pointer;
 }
 .toggle-pill.on {
@@ -1232,7 +1239,7 @@ textarea {
 .swatch-btn {
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: 8px;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px var(--border-strong);
   cursor: pointer;
@@ -1240,7 +1247,7 @@ textarea {
 .swatch-btn.sm {
   width: 20px;
   height: 20px;
-  border-radius: 5px;
+  border-radius: 6px;
 }
 .swatch-btn.on {
   box-shadow: 0 0 0 2px var(--ink);
@@ -1248,7 +1255,7 @@ textarea {
 .swatch-custom {
   width: 24px;
   height: 24px;
-  border-radius: 7px;
+  border-radius: 8px;
   border: 1px dashed var(--border-strong);
   display: flex;
   align-items: center;
@@ -1293,7 +1300,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -1304,7 +1311,7 @@ textarea {
 .finish-chip {
   width: 16px;
   height: 16px;
-  border-radius: 4px;
+  border-radius: 6px;
   border: 1px solid rgba(0, 0, 0, 0.14);
 }
 
@@ -1322,7 +1329,7 @@ textarea {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 11.5px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -1338,7 +1345,7 @@ textarea {
   width: 120px;
   padding: 5px 8px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   text-align: right;
   font-weight: 600;
 }
@@ -1384,22 +1391,22 @@ textarea {
   background: var(--bad-bg);
 }
 .ergo-score-num {
-  font-size: 19px;
+  font-size: 18px;
   font-weight: 800;
   line-height: 1;
 }
 .ergo-score-sub {
-  font-size: 9.5px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 .ergo-score-title {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 700;
 }
 .ergo-score-stats {
   display: flex;
   gap: 10px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-2);
   margin-top: 4px;
 }
@@ -1426,7 +1433,7 @@ textarea {
 }
 .anthro-grid span {
   display: block;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 .anthro-grid b {
@@ -1439,11 +1446,14 @@ textarea {
   gap: 5px;
 }
 .scenario-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 8px;
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   text-align: left;
   cursor: pointer;
@@ -1460,7 +1470,7 @@ textarea {
 }
 .finding-card {
   padding: 9px 10px;
-  border-radius: 9px;
+  border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
 }
@@ -1500,12 +1510,12 @@ textarea {
   color: var(--accent);
 }
 .finding-title {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 700;
   margin-top: 3px;
 }
 .finding-detail {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-2);
   line-height: 1.42;
   margin-top: 2px;
@@ -1514,7 +1524,7 @@ textarea {
 /* ==================== VERSIONS ==================== */
 .save-box {
   padding: 10px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--surface-soft);
   border: 1px solid var(--border);
   display: flex;
@@ -1527,7 +1537,7 @@ textarea {
   border-radius: 8px;
   border: 1px solid var(--border);
   background: var(--surface);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .versions-list {
@@ -1537,7 +1547,7 @@ textarea {
 }
 .version-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   background: var(--surface);
 }
@@ -1563,7 +1573,7 @@ textarea {
   left: 7px;
   background: var(--accent);
   color: #fff;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   padding: 2px 7px;
   border-radius: 999px;
@@ -1578,10 +1588,10 @@ textarea {
   gap: 6px;
 }
 .version-title {
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .version-date {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-3);
   flex-shrink: 0;
 }
@@ -1661,7 +1671,7 @@ textarea {
 }
 .mood-header h3 {
   margin: 0;
-  font-size: 17px;
+  font-size: 18px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -1671,7 +1681,7 @@ textarea {
 }
 .mood-sub {
   margin: 4px 0 0;
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--ink-2);
   line-height: 1.45;
 }
@@ -1695,7 +1705,7 @@ textarea {
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .mood-url-foot {
   display: flex;
@@ -1709,7 +1719,7 @@ textarea {
   gap: 8px;
   flex-wrap: wrap;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--surface);
   border: 1px dashed var(--border-strong);
   font-size: 12px;
@@ -1721,7 +1731,7 @@ textarea {
   padding: 4px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  font-size: 11.5px;
+  font-size: 12px;
   background: var(--surface-soft);
 }
 
@@ -1738,7 +1748,7 @@ textarea {
 .mood-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: 12px;
   overflow: hidden;
   box-shadow: var(--shadow-sm);
   display: flex;
@@ -1765,7 +1775,7 @@ textarea {
   border-radius: 999px;
   background: rgba(30, 28, 25, 0.72);
   color: #fff;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 600;
 }
 .mood-fav-btn {
@@ -1795,15 +1805,16 @@ textarea {
 }
 .mood-card-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
 .mood-title-edit {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
   border: 0;
   background: transparent;
-  font-size: 13.5px;
+  font-size: 14px;
   font-weight: 700;
   padding: 2px 0;
 }
@@ -1819,7 +1830,7 @@ textarea {
   width: 100%;
   border: 1px solid transparent;
   background: var(--surface-soft);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 6px 8px;
   font-size: 12px;
   color: var(--ink-2);
@@ -1837,7 +1848,7 @@ textarea {
   border-top: 1px solid var(--border);
 }
 .mood-palette-label {
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 700;
   color: var(--ink-3);
   display: flex;
@@ -1868,12 +1879,12 @@ textarea {
   transform: scale(1.06);
 }
 .palette-hex {
-  font-size: 9.5px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 .palette-apply-hint {
   margin-top: 5px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--ink-3);
   display: flex;
   align-items: center;
@@ -1955,7 +1966,7 @@ textarea {
   gap: 4px;
 }
 .form-grid label > span {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--ink-2);
 }
@@ -2035,7 +2046,7 @@ textarea {
 }
 .compare-thumb {
   height: 150px;
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
   background: #e9e4db;
   border: 1px solid var(--border);
@@ -2055,7 +2066,7 @@ textarea {
 }
 .compare-note {
   margin: 0 0 10px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-3);
   min-height: 28px;
 }
@@ -2073,11 +2084,11 @@ textarea {
 }
 .compare-stats span {
   display: block;
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 .compare-stats b {
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .compare-diff-box {
@@ -2088,7 +2099,7 @@ textarea {
 .compare-delta-bar {
   display: flex;
   gap: 20px;
-  font-size: 12.5px;
+  font-size: 13px;
   margin-bottom: 10px;
 }
 .compare-diff-cols {
@@ -2097,13 +2108,13 @@ textarea {
   gap: 14px;
 }
 .diff-head {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--ink-2);
   margin-bottom: 5px;
 }
 .diff-item {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-2);
   padding: 3px 0;
 }
@@ -2116,7 +2127,7 @@ textarea {
 .lightbox-body img {
   max-width: 100%;
   max-height: 66dvh;
-  border-radius: 10px;
+  border-radius: 12px;
 }
 .lightbox-note {
   margin: 12px 0 0;
@@ -2175,7 +2186,7 @@ a {
   height: 64px;
   border-radius: 8px;
   background: var(--surface-soft);
-  border: 1px solid var(--border);
+  border: 0;
   flex-shrink: 0;
   overflow: hidden;
   display: flex;
@@ -2198,17 +2209,17 @@ a {
   box-shadow: 0 0 0 1px var(--accent);
 }
 .badge-approx {
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--warn-bg);
   color: var(--warn);
   font-weight: 700;
 }
 .badge-flat {
-  font-size: 10px;
+  font-size: 11px;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: 6px;
   background: var(--good-bg);
   color: var(--good);
   font-weight: 700;
@@ -2246,17 +2257,17 @@ a {
   min-width: 0;
 }
 .field > span {
-  font-size: 10.5px;
+  font-size: 11px;
   color: var(--ink-3);
 }
 .inp {
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 6px 8px;
   background: var(--surface);
   min-width: 0;
   width: 100%;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 .inp:focus {
   outline: 2px solid var(--accent-soft);
@@ -2271,7 +2282,7 @@ textarea.inp {
   display: flex;
   align-items: center;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--surface);
   overflow: hidden;
 }
@@ -2324,7 +2335,7 @@ input[type='color'] {
   width: 30px;
   height: 28px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 2px;
   background: #fff;
 }
@@ -2336,7 +2347,7 @@ input[type='color'] {
 .swatches button {
   width: 20px;
   height: 20px;
-  border-radius: 5px;
+  border-radius: 6px;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px var(--border-strong);
   cursor: pointer;
@@ -2345,7 +2356,7 @@ input[type='color'] {
   box-shadow: 0 0 0 2px var(--ink);
 }
 .note {
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-3);
   line-height: 1.5;
 }
@@ -2375,7 +2386,7 @@ input[type='color'] {
 details.more > summary {
   cursor: pointer;
   list-style: none;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   color: var(--ink-2);
   display: flex;
@@ -2390,7 +2401,7 @@ details.more[open] > summary {
 }
 .tool-card {
   padding: 9px;
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--surface-soft);
   border: 1px solid var(--border);
 }
@@ -2414,12 +2425,14 @@ details.more[open] > summary {
   font-weight: 800;
 }
 .tag3d.room {
-  background: transparent;
+  /* a light plate, so the name reads on pale wood and on a black floor alike */
+  background: rgba(255, 255, 255, 0.82);
   border: 0;
-  color: #6d665e;
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--ink-2);
   font-weight: 700;
   font-size: 12px;
-  text-shadow: 0 0 3px #fff, 0 0 3px #fff;
 }
 .tag3d.item {
   display: flex;
@@ -2432,7 +2445,7 @@ details.more[open] > summary {
 .tag3d.item small {
   font-weight: 400;
   color: var(--ink-3);
-  font-size: 10px;
+  font-size: 11px;
 }
 .tag3d.person {
   background: #fff4ec;
@@ -2456,7 +2469,7 @@ details.more[open] > summary {
   left: 14px;
   bottom: 16px;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--border);
   font-size: 11px;
@@ -2493,7 +2506,7 @@ details.more[open] > summary {
   color: #fff;
   border-radius: 999px;
   padding: 2px 9px;
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -2542,7 +2555,7 @@ details.more[open] > summary {
   gap: 2px;
   align-items: center;
   padding: 3px;
-  border-radius: 10px;
+  border-radius: 12px;
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
@@ -2551,7 +2564,7 @@ details.more[open] > summary {
   border: 0;
   background: transparent;
   padding: 6px 9px;
-  border-radius: 7px;
+  border-radius: 8px;
   font-size: 12px;
   font-weight: 600;
   color: var(--ink-2);
@@ -2566,7 +2579,7 @@ details.more[open] > summary {
   color: #fff;
 }
 .tool-group label {
-  font-size: 11.5px;
+  font-size: 12px;
   display: flex;
   gap: 4px;
   align-items: center;
@@ -2736,7 +2749,7 @@ details.more[open] > summary {
   max-width: 360px;
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: 12px;
   padding: 28px 24px;
   box-shadow: var(--shadow-md);
   display: flex;
@@ -2753,7 +2766,7 @@ details.more[open] > summary {
 .login-card p {
   margin: 0 0 10px;
   color: var(--ink-2);
-  font-size: 13.5px;
+  font-size: 14px;
   line-height: 1.5;
 }
 .login-card label {
@@ -2762,7 +2775,7 @@ details.more[open] > summary {
 }
 .login-card .inp {
   padding: 10px 12px;
-  font-size: 15px;
+  font-size: 16px;
 }
 .login-card .btn-primary {
   margin-top: 6px;
@@ -2771,4 +2784,140 @@ details.more[open] > summary {
 }
 .login-card .callout {
   margin: 4px 0 0;
+}
+
+/* ======================================================================
+   Interaction layer — one feedback system for every control:
+   hover steps up, press settles, keyboard focus always shows a ring.
+   ====================================================================== */
+.btn-primary,
+.btn-secondary,
+.btn-place,
+.btn-save-top,
+.btn-danger,
+.btn-xs,
+.chip,
+.pill-toggle,
+.icon-pill,
+.btn-link-icon,
+.scenario-btn,
+.mode-switcher button,
+.left-tabs button,
+.camera-bar button {
+  transition:
+    background-color 0.16s var(--ease),
+    border-color 0.16s var(--ease),
+    color 0.16s var(--ease),
+    box-shadow 0.16s var(--ease),
+    transform 0.12s var(--ease);
+}
+.btn-primary:hover:not(:disabled),
+.btn-save-top:hover:not(:disabled),
+.btn-place:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(30, 28, 25, 0.14);
+}
+.btn-secondary:hover:not(:disabled),
+.scenario-btn:hover {
+  transform: translateY(-1px);
+}
+.btn-primary:active:not(:disabled),
+.btn-secondary:active:not(:disabled),
+.btn-place:active:not(:disabled),
+.btn-save-top:active:not(:disabled),
+.btn-danger:active:not(:disabled),
+.btn-xs:active:not(:disabled),
+.chip:active,
+.pill-toggle:active,
+.icon-pill:active:not(:disabled),
+.btn-link-icon:active,
+.scenario-btn:active,
+.mode-switcher button:active {
+  transform: translateY(0) scale(0.97);
+  box-shadow: none;
+}
+.btn-link-icon:hover {
+  background: var(--surface-hover);
+}
+.btn-register {
+  width: 100%;
+  height: 36px;
+  background: var(--surface-soft);
+}
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline-offset: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .btn-primary:hover,
+  .btn-secondary:hover,
+  .btn-place:hover,
+  .btn-save-top:hover,
+  .scenario-btn:hover {
+    transform: none;
+  }
+}
+
+/* ---------------------------------------------------------------- phone: header in two rows, 40px+ targets */
+@media (max-width: 760px) {
+  .studio-header {
+    padding: 8px 12px;
+    gap: 8px;
+  }
+  .brand-block {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .brand-block > div {
+    min-width: 0;
+  }
+  .brand-mark {
+    width: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+  .brand-title {
+    font-size: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .header-actions {
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .header-actions .icon-pill {
+    width: 40px;
+    height: 40px;
+  }
+  .header-actions .btn-save-top {
+    height: 40px;
+  }
+  .mode-switcher button {
+    min-height: 38px;
+    font-size: 13px;
+  }
+  .mobile-tabs button {
+    min-height: 48px;
+    font-size: 13px;
+  }
+  .btn-place,
+  .btn-link-icon {
+    height: 40px;
+  }
+  .btn-link-icon {
+    width: 40px;
+  }
 }
