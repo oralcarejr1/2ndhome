@@ -1,9 +1,16 @@
-import type { CategoryId, ErgoRole, MatKind, Mount, Product } from '../types';
+import type { CategoryId, ErgoRole, MatKind, Mount, ParamValue, Product } from '../types';
+import type { ShapeFeatures } from './productShape';
+
+export type DimAxis = 'w' | 'd' | 'h';
 
 export interface ImportedProductOption {
   label: string;
   dims?: Partial<Product['dims']>;
   price?: number;
+  /** generator parameters this option implies (e.g. seats, drawer rows, mattress size) */
+  params?: Record<string, ParamValue>;
+  /** axes taken from a standard size table rather than the page */
+  estimated?: DimAxis[];
 }
 
 export type AiErrorKind =
@@ -25,6 +32,15 @@ export interface ImportedProduct {
   mount?: Mount;
   ergo?: ErgoRole;
   dims?: Partial<Product['dims']>;
+  /** axes not stated by the seller — filled with a typical size for this kind of furniture */
+  dimsEstimated?: DimAxis[];
+  sub?: string;
+  seatH?: number;
+  /** procedural-model parameters matching the product's form */
+  params?: Record<string, ParamValue>;
+  imageUrl?: string;
+  /** form details read by AI (drawer count, seats, …) */
+  features?: ShapeFeatures;
   color?: string;
   material?: MatKind;
   notes?: string;
@@ -44,7 +60,7 @@ export const VALID_CATEGORIES: readonly CategoryId[] = [
 export const VALID_MODELS: readonly string[] = [
   'sofa', 'chair', 'office', 'lounge', 'bench', 'table', 'bed', 'case', 'shelf',
   'rack', 'lamp', 'rug', 'curtain', 'plant', 'frame', 'mirror', 'decor', 'block',
-  'appliance', 'screen', 'kitchen', 'bath', 'activity',
+  'appliance', 'screen', 'kitchen', 'bath', 'activity', 'vanity',
 ];
 
 export const VALID_MOUNTS: readonly Mount[] = ['floor', 'wall', 'ceiling', 'surface'];

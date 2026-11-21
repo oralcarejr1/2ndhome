@@ -210,8 +210,11 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
           }
           const modelChanged = nextModel !== x.model;
           let mats = modelChanged ? resolveMats({ model: nextModel } as Product) : { ...(x.mats ?? {}) };
+          // form parameters chosen by the importer (drawer rows, seats, mattress size, …)
+          const importedParams = !base && data.params && nextModel === data.model ? data.params : undefined;
           if (!base && (data.color || data.material)) {
-            const firstSlot = Object.keys(MODELS[nextModel]?.slots ?? {})[0];
+            const slots = Object.keys(MODELS[nextModel]?.slots ?? {});
+            const firstSlot = importedParams?.style === 'mattress' && slots.includes('mattress') ? 'mattress' : slots[0];
             if (firstSlot) {
               const cur = mats[firstSlot] ?? MODELS[nextModel].slots[firstSlot].def;
               mats = {
@@ -235,8 +238,13 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
             mount: data.mount ?? x.mount,
             ergo: data.ergo ?? x.ergo,
             notes: data.notes ?? x.notes,
+            sub: data.sub ?? x.sub,
+            seatH: data.seatH ?? x.seatH,
+            approx: data.dimsEstimated?.length ? true : x.approx,
             mats,
-            ...(modelChanged ? { params: resolveParams({ model: nextModel } as Product) } : {}),
+            ...(modelChanged || importedParams
+              ? { params: { ...resolveParams({ model: nextModel } as Product), ...(importedParams ?? {}) } }
+              : {}),
           };
         });
 
@@ -244,7 +252,8 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
           setImportedOptions(data.options);
         }
 
-        const hasAllDims = (['w', 'd', 'h'] as const).every((a) => data.dims?.[a] !== undefined);
+        const estimatedAxes = data.dimsEstimated ?? [];
+        const hasAllDims = (['w', 'd', 'h'] as const).every((a) => data.dims?.[a] !== undefined && !estimatedAxes.includes(a));
         const missing = [
           !data.name && '제품명',
           !data.brand && '브랜드',
@@ -257,12 +266,17 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
 
         const aiTag = usedAi ? ' (AI 분석 포함)' : '';
         if (missing.length) {
+          const axisName = { w: '가로', d: '깊이', h: '높이' } as const;
+          const estTip = estimatedAxes.length
+            ? ` 판매처가 글로 밝히지 않은 ${estimatedAxes.map((a) => axisName[a]).join('·')}는 같은 종류 가구의 보통 크기로 임시 입력했어요.`
+            : '';
           const dimTip =
-            !hasAllDims && data.aiConfigured === false
+            estTip +
+            (!hasAllDims && data.aiConfigured === false
               ? ' 치수가 상세 이미지 안에만 있다면 아래에 텍스트를 붙여넣거나, 서버에 AI 키(GEMINI_API_KEY)를 연결하면 이미지 치수까지 자동으로 읽어요.'
               : !hasAllDims
                 ? ' 치수가 상세 이미지에 있다면 사이즈표 영역을 캡처해 아래에 붙여넣어(Ctrl+V) 보세요.'
-                : '';
+                : '');
           setImportNote(`불러왔어요${aiTag}. ${missing.join('·')} 정보는 직접 확인해 주세요.${dimTip}`);
         } else {
           setImportNote(`상품 정보를 모두 불러왔어요${aiTag}. 선택한 옵션의 치수와 가격이 맞는지 확인해 주세요.`);
@@ -344,7 +358,12 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
       for (const axis of ['w', 'd', 'h'] as const) {
         if (opt.dims?.[axis] !== undefined) dims[axis] = opt.dims[axis]!;
       }
-      return { ...x, dims, ...(opt.price !== undefined ? { price: opt.price } : {}) };
+      return {
+        ...x,
+        dims,
+        ...(opt.params ? { params: { ...resolveParams(x), ...opt.params } } : {}),
+        ...(opt.price !== undefined ? { price: opt.price } : {}),
+      };
     });
   };
 
@@ -469,7 +488,7 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
                 <div className="import-option-chips">
                   {importedOptions.map((opt, idx) => {
                     const dimLabel = [opt.dims?.w, opt.dims?.d, opt.dims?.h].some((v) => v !== undefined)
-                      ? `${opt.dims?.w ?? '?'}×${opt.dims?.d ?? '?'}×${opt.dims?.h ?? '?'}cm`
+                      ? `${opt.dims?.w ?? '?'}×${opt.dims?.d ?? '?'}×${opt.dims?.h ?? '?'}cm${opt.estimated?.length ? '(표준 규격)' : ''}`
                       : '';
                     return (
                       <button

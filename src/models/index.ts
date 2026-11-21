@@ -7,6 +7,7 @@ import type { ModelDef } from './parts';
 import { benchDef, chairDef, loungeDef, officeDef, sofaDef } from './seating';
 import { caseDef, rackDef, shelfDef } from './storage';
 import { bedDef, tableDef } from './tables';
+import { vanityDef } from './vanity';
 
 export const MODELS: Record<string, ModelDef> = Object.fromEntries(
   [
@@ -33,6 +34,7 @@ export const MODELS: Record<string, ModelDef> = Object.fromEntries(
     kitchenDef,
     bathDef,
     activityDef,
+    vanityDef,
   ].map((d) => [d.key, d]),
 );
 

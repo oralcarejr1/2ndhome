@@ -8,6 +8,7 @@ import {
   type ImportedProduct,
   type ImportedProductOption,
 } from '../src/lib/productImport.js';
+import type { ShapeFeatures } from '../src/lib/productShape.js';
 import type { CategoryId, ErgoRole, MatKind, Mount } from '../src/types.js';
 
 export type AiProvider = 'gemini' | 'openai' | 'anthropic';
@@ -84,13 +85,26 @@ Return ONLY a single valid JSON object with this schema (use null for any field 
   "notes": string | null,       // brief Korean note (<= 120 chars) summarizing material, key option notes, or seat height if shown
   "options": [                  // optional list (up to 10) if multiple distinct size/price options exist (e.g. 2인용/3인용/4인용, SS/Q/K, 1200/1400)
     { "label": string, "dims": { "w": number | null, "d": number | null, "h": number | null }, "price": number | null }
-  ]
+  ],
+  "features": {                 // visible form details used to build the 3D model (null when unknown)
+    "drawers": number | null,   // drawer count in one column (e.g. 5단 서랍장 -> 5)
+    "doors": number | null,     // door count across the front
+    "shelves": number | null,   // shelf/tier count
+    "seats": number | null,     // sofa seats
+    "seatH": number | null,     // seat height in cm (chairs/sofas)
+    "round": boolean | null,    // round/circular top or body
+    "mirror": boolean | null,   // has a built-in mirror
+    "legs": "none" | "wood" | "metal" | "hairpin" | null
+  }
 }
 CRITICAL RULES:
 1. NEVER guess, estimate, or hallucinate dimensions or prices. Only output numbers explicitly stated in the text or visibly readable in the attached images.
 2. Pay close attention to Korean furniture size diagrams/tables in images (e.g., W2100×D950×H850mm -> w: 210, d: 95, h: 85; 가로 120 × 세로 60 × 높이 75cm -> w: 120, d: 60, h: 75).
 3. Ignore packaging/box dimensions, delivery fees, coupon amounts, pixel sizes, and unrelated recommended products.
-4. For Korean furniture, "세로" in top-view specs (tables, desks, beds, rugs, cabinets) usually means depth (d), while "높이" is height (h). For vertical flat items (mirrors, wall frames), "세로" is height (h).`;
+4. For Korean furniture, "세로" in top-view specs (tables, desks, beds, rugs, cabinets) usually means depth (d), while "높이" is height (h). For vertical flat items (mirrors, wall frames), "세로" is height (h).
+5. Images may be slices of a long seller detail page and can include unrelated items (cross-sold products, included accessories such as a stool or cover, shipping-fee tables). Report the OVERALL outer size of the main product only (e.g. a vanity's cabinet, not its stool; a bed frame's outer size, not the mattress).
+6. When the page lists several sizes, put each in "options" (label like "SS", "3단 800", "3인") with its dims and set "dims" to the first option. Korean shops often omit units: 4-digit numbers like 1130*2160*1000 are millimetres.
+7. Reading "W445 * D445 * H1605 (mm)" gives w: 44.5, d: 44.5, h: 160.5. Ranges like H750~910 use the first (normal) value.`;
 
 function cleanStr(v: unknown, max = 240): string | undefined {
   if (typeof v !== 'string') return undefined;
@@ -164,6 +178,27 @@ export function extractJsonObject(text: string): Record<string, unknown> | null 
   return null;
 }
 
+function cleanFeatures(raw: unknown): ShapeFeatures | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const o = raw as Record<string, unknown>;
+  const count = (v: unknown, max: number) => (typeof v === 'number' && Number.isFinite(v) && v >= 1 && v <= max ? Math.round(v) : undefined);
+  const out: ShapeFeatures = {};
+  const drawers = count(o.drawers, 10);
+  const doors = count(o.doors, 8);
+  const shelves = count(o.shelves, 10);
+  const seats = count(o.seats, 8);
+  const seatH = typeof o.seatH === 'number' && o.seatH >= 10 && o.seatH <= 90 ? Math.round(o.seatH) : undefined;
+  if (drawers) out.drawers = drawers;
+  if (doors) out.doors = doors;
+  if (shelves) out.shelves = shelves;
+  if (seats) out.seats = seats;
+  if (seatH) out.seatH = seatH;
+  if (typeof o.round === 'boolean') out.round = o.round;
+  if (typeof o.mirror === 'boolean') out.mirror = o.mirror;
+  if (o.legs === 'none' || o.legs === 'wood' || o.legs === 'metal' || o.legs === 'hairpin') out.legs = o.legs;
+  return Object.keys(out).length ? out : undefined;
+}
+
 export function sanitizeAiProduct(raw: Record<string, unknown>, url?: string): ImportedProduct {
   const name = cleanStr(raw.name, 200);
   const rawBrand = cleanStr(raw.brand, 80);
@@ -193,11 +228,14 @@ export function sanitizeAiProduct(raw: Record<string, unknown>, url?: string): I
     }
   }
 
+  const features = cleanFeatures(raw.features);
+
   return {
     ...(url ? { url } : {}),
     ...(name ? { name } : {}),
     ...(brand ? { brand } : {}),
     ...(price !== undefined ? { price } : {}),
+    ...(features ? { features } : {}),
     ...(category ? { category } : {}),
     ...(model ? { model } : {}),
     ...(mount ? { mount } : {}),
@@ -483,12 +521,12 @@ export async function extractWithAi(
     sections.push(`Page content:\n${input.text.slice(0, 18_000)}`);
   }
   if (input.images?.length) {
-    sections.push(`Attached ${input.images.length} product/spec image(s). Carefully read any dimension tables, size diagrams (W×D×H / 가로×세로×높이 / mm or cm), brand, product name, and prices shown in the images.`);
+    sections.push(`Attached ${input.images.length} image(s) cut from the seller's detail page (in page order). Find the size chart / spec table among them and carefully read the dimension numbers (W×D×H / 가로×세로×높이 / mm or cm), size options and visible form details. Ignore images about other products.`);
   }
   if (sections.length === 0) return null;
 
   const prompt = `${sections.join('\n\n')}\n\nExtract the furniture product data as JSON.`;
-  const images = (input.images ?? []).slice(0, 4);
+  const images = (input.images ?? []).slice(0, 14);
 
   try {
     let rawText: string | null = null;

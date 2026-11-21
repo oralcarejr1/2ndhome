@@ -234,6 +234,27 @@ function buildBed(c: GenCtx) {
   const mz1 = Math.min(mz0 + ml, d / 2 - (footH > 0 ? 3 : 0));
   const railTop = frameH;
 
+  if (style === 'mattress') {
+    // mattress / topper only: the whole box is the mattress (folding toppers show their panels)
+    const segs = Math.max(1, Math.min(4, Math.round(num(p, 'segments', 1))));
+    const gap = segs > 1 ? 0.6 : 0;
+    const sl = (d - gap * (segs - 1)) / segs;
+    for (let i = 0; i < segs; i++) {
+      const z0 = -d / 2 + i * (sl + gap);
+      rbb(g, -w / 2, 0, z0, w / 2, h, z0 + sl, Math.min(4, h / 3), mat);
+    }
+    if (h >= 15) {
+      // quilted pillow-top seam
+      bb(g, -w / 2 + 0.5, h * 0.78, -d / 2 + 0.5, w / 2 - 0.5, h * 0.8, d / 2 - 0.5, c.mat('bedding'));
+    }
+    if (bedding) {
+      const pw = Math.min(60, w / (w >= 120 ? 2 : 1) - 8);
+      const n = w >= 120 ? 2 : 1;
+      for (let i = 0; i < n; i++) rbox(g, pw, 12, 38, 6, c.mat('pillow'), n === 1 ? 0 : (i === 0 ? -1 : 1) * (w / 4), h + 6, -d / 2 + 24);
+    }
+    return g;
+  }
+
   if (style === 'floor') {
     // low platform / mattress on floor frame
     rbb(g, -w / 2, 0, -d / 2, w / 2, Math.max(4, frameH), d / 2, 1, frame);
@@ -316,8 +337,9 @@ export const bedDef: ModelDef = {
       label: '프레임 형태',
       type: 'select',
       default: 'platform',
-      options: opts(['platform', '평상형(원목)'], ['upholstered', '패브릭 헤드'], ['storage', '수납형(서랍)'], ['floor', '저상형/깔판']),
+      options: opts(['platform', '평상형(원목)'], ['upholstered', '패브릭 헤드'], ['storage', '수납형(서랍)'], ['floor', '저상형/깔판'], ['mattress', '매트리스·토퍼만']),
     },
+    { key: 'segments', label: '접이식 분할(매트리스만)', type: 'number', default: 1, min: 1, max: 4, step: 1 },
     { key: 'mattressW', label: '매트리스 폭', type: 'number', default: 150, min: 80, max: 220, unit: 'cm' },
     { key: 'mattressL', label: '매트리스 길이', type: 'number', default: 200, min: 180, max: 220, unit: 'cm' },
     { key: 'mattressT', label: '매트리스 두께', type: 'number', default: 25, min: 5, max: 40, unit: 'cm' },

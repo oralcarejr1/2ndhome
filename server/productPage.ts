@@ -9,6 +9,9 @@ import {
   type ImportedProduct,
   type ImportedProductOption,
 } from '../src/lib/productImport.js';
+import { parseOhouseGoods, type OhouseExtract } from './ohouse.js';
+import { finalizeProduct, statedDims } from './productFinalize.js';
+import { cdnSized, sliceForVision } from './specImages.js';
 import {
   cleanUrlForLookup,
   extractWithAi,
@@ -656,6 +659,7 @@ interface PageSignals {
   textSummary: string;
   imageUrls: string[];
   blocked: boolean;
+  categoryPath: string[];
 }
 
 function extractPageSignals(html: string, url: string): PageSignals {
@@ -672,7 +676,7 @@ function extractPageSignals(html: string, url: string): PageSignals {
     (html.length < 40_000 && CHALLENGE_BODY.test(html) && !meta['og:title']);
 
   if (blocked) {
-    return { product: { url, blocked: true }, textSummary: '', imageUrls: [], blocked: true };
+    return { product: { url, blocked: true }, textSummary: '', imageUrls: [], blocked: true, categoryPath: [] };
   }
 
   // 1) JSON-LD Products & Breadcrumbs
@@ -875,35 +879,56 @@ function extractPageSignals(html: string, url: string): PageSignals {
     .filter(Boolean)
     .join('\n\n');
 
-  return { product, textSummary, imageUrls, blocked: false };
+  const ldCategory = (Array.isArray(p.category) ? p.category : [p.category])
+    .filter((c: unknown): c is string => typeof c === 'string')
+    .flatMap((c: string) => c.split(/\s*[>›/]\s*/));
+  const categoryPath = [...ldCategory, ...breadcrumbs, ...embedded.categoryText]
+    .map((c) => clean(c, 40))
+    .filter((c): c is string => Boolean(c) && !/^(?:홈|home|전체|오늘의집)$/i.test(c!));
+  return { product, textSummary, imageUrls, blocked: false, categoryPath };
 }
 
 export function parseProductPage(html: string, url: string): ImportedProduct {
   return extractPageSignals(html, url).product;
 }
 
-async function fetchSpecImages(imageUrls: string[], signal: AbortSignal): Promise<InlineImage[]> {
-  const out: InlineImage[] = [];
-  const candidates = imageUrls.slice(0, 4);
+async function fetchImageBodies(
+  imageUrls: string[],
+  signal: AbortSignal,
+  opts: { max: number; maxBytes: number; timeoutMs: number },
+): Promise<{ url: string; body: Buffer; mimeType: string }[]> {
+  const candidates = imageUrls.slice(0, opts.max);
   const results = await Promise.allSettled(
     candidates.map(async (imgUrl) => {
-      const imgSignal = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
-      const res = await fetchRemoteBuffer(imgUrl, {
+      const imgSignal = AbortSignal.any([signal, AbortSignal.timeout(opts.timeoutMs)]);
+      const res = await fetchRemoteBuffer(cdnSized(imgUrl), {
         accept: 'image/webp,image/png,image/jpeg,image/*;q=0.8',
         contentTypePattern: /^image\/(?:png|jpeg|jpg|webp|gif)/i,
-        maxBytes: MAX_IMAGE_BYTES,
+        maxBytes: opts.maxBytes,
         signal: imgSignal,
       });
       if (res.blocked || !res.body.length) return null;
       const mime = res.contentType.split(';')[0].trim().toLowerCase();
-      const mimeType = mime === 'image/jpg' ? 'image/jpeg' : mime;
-      return { mimeType, base64: res.body.toString('base64') } satisfies InlineImage;
+      return { url: imgUrl, body: res.body, mimeType: mime === 'image/jpg' ? 'image/jpeg' : mime };
     }),
   );
-  for (const r of results) {
-    if (r.status === 'fulfilled' && r.value) out.push(r.value);
-  }
-  return out;
+  return results.flatMap((r) => (r.status === 'fulfilled' && r.value ? [r.value] : []));
+}
+
+/** Fetches detail images and returns the slices most likely to hold the size chart. */
+async function fetchSpecImages(imageUrls: string[], signal: AbortSignal, max = 6): Promise<InlineImage[]> {
+  const bodies = await fetchImageBodies(imageUrls, signal, { max, maxBytes: MAX_IMAGE_BYTES * 3, timeoutMs: 7_000 });
+  if (!bodies.length) return [];
+  let slices: InlineImage[] = [];
+  try {
+    slices = (await sliceForVision(bodies, { maxSlices: 12 })).map(({ mimeType, base64 }) => ({ mimeType, base64 }));
+  } catch { /* fall through to originals */ }
+  if (slices.length) return slices;
+  // Undecodable here (e.g. exotic format): let the vision model try the originals.
+  return bodies
+    .filter((b) => b.body.length <= MAX_IMAGE_BYTES && /^image\/(?:png|jpeg|webp|gif)$/.test(b.mimeType))
+    .slice(0, 4)
+    .map((b) => ({ mimeType: b.mimeType, base64: b.body.toString('base64') }));
 }
 
 export async function readProductPage(
@@ -981,8 +1006,7 @@ export async function readProductPage(
             aiWeb.product.category,
           );
           return {
-            ...inferred,
-            ...aiWeb.product,
+            ...finalizeProduct({ ...inferred, ...aiWeb.product }),
             url: lastBlockedUrl,
             source: 'ai-web',
             aiConfigured: true,
@@ -1000,10 +1024,13 @@ export async function readProductPage(
     throw lastError instanceof Error ? lastError : new Error('page_unavailable');
   }
 
+  const ohouse = parseOhouseGoods(fetched.html, fetched.url);
+  if (ohouse) return readOhouse(ohouse, cleanUrlForLookup(fetched.url).cleanUrl, aiReady, signal);
+
   const signals = extractPageSignals(fetched.html, fetched.url);
-  const base = signals.product;
-  const missingAnyDim =
-    base.dims?.w === undefined || base.dims?.d === undefined || base.dims?.h === undefined;
+  const base = finalizeProduct(signals.product, { categoryPath: signals.categoryPath });
+  const stated = statedDims(base);
+  const missingAnyDim = stated?.w === undefined || stated?.d === undefined || stated?.h === undefined;
   const needsAi =
     aiReady &&
     (missingAnyDim || !base.name || !base.brand || base.price === undefined || !base.category);
@@ -1013,23 +1040,68 @@ export async function readProductPage(
   }
 
   const specImages =
-    missingAnyDim && signals.imageUrls.length > 0 ? await fetchSpecImages(signals.imageUrls, signal) : [];
+    missingAnyDim && signals.imageUrls.length > 0 ? await fetchSpecImages(signals.imageUrls, signal, 6) : [];
 
   const aiResult = await extractWithAi(
     {
       url: fetched.url,
       text: signals.textSummary,
-      partial: base,
+      partial: { ...base, dims: stated },
       images: specImages,
     },
     { signal },
   );
 
-  const merged = mergeImportedProducts(base, aiResult, specImages.length > 0);
+  const merged = mergeImportedProducts({ ...base, dims: stated, dimsEstimated: undefined }, aiResult, specImages.length > 0);
   return {
-    ...merged,
+    ...finalizeProduct(merged, { categoryPath: signals.categoryPath }),
     url: fetched.url,
     source: aiResult ? 'page+ai' : 'page',
+    aiConfigured: true,
+  };
+}
+
+async function readOhouse(
+  oh: OhouseExtract,
+  url: string,
+  aiReady: boolean,
+  signal: AbortSignal,
+): Promise<ImportedProduct> {
+  const base = oh.product;
+  const stated = statedDims(base);
+  const complete = stated?.w !== undefined && stated?.d !== undefined && stated?.h !== undefined;
+  if (!aiReady || (oh.textDims && complete && base.name && base.price !== undefined)) {
+    return { ...base, url, source: 'page', aiConfigured: aiReady };
+  }
+
+  const images = oh.specImages.length ? await fetchSpecImages(oh.specImages, signal, 20) : [];
+  const aiResult = await extractWithAi(
+    { url, text: oh.summary, partial: { ...base, dims: stated }, images },
+    { signal },
+  );
+  if (!aiResult) return { ...base, url, source: 'page', aiConfigured: true };
+
+  // Seller text (notice/title) beats AI; AI beats our estimates. Name/brand/price come from the store record.
+  const aiDims = aiResult.dims ?? {};
+  const dims = oh.textDims ? { ...aiDims, ...(stated ?? {}) } : { ...(stated ?? {}), ...aiDims };
+  const aiOptions = (aiResult.options ?? []).filter((o) => o.dims && Object.keys(o.dims).length >= 2);
+  const options = aiOptions.length >= 2 ? aiOptions : base.options;
+  const hasAiDims = Object.keys(aiDims).length > 0;
+  const merged: ImportedProduct = {
+    ...base,
+    dims: Object.keys(dims).length ? dims : undefined,
+    dimsEstimated: hasAiDims || oh.textDims ? undefined : base.dimsEstimated,
+    ...(options?.length ? { options } : {}),
+    ...(aiResult.features ? { features: aiResult.features } : {}),
+    ...(aiResult.notes ? { notes: aiResult.notes } : {}),
+    ...(base.material ? {} : aiResult.material ? { material: aiResult.material } : {}),
+    ...(base.color ? {} : aiResult.color ? { color: aiResult.color } : {}),
+  };
+  if (!hasAiDims && !oh.textDims) merged.dims = base.dims; // keep estimates (still flagged)
+  return {
+    ...finalizeProduct(merged, { categoryPath: oh.categoryPath, extra: oh.extra, presetParams: hasAiDims ? undefined : oh.presetParams }),
+    url,
+    source: 'page+ai',
     aiConfigured: true,
   };
 }
