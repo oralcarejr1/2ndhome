@@ -55,7 +55,15 @@ export function ProductTags({ p }: { p: Product }) {
   );
 }
 
-type Filter = CategoryId | 'all' | 'star' | 'mine' | 'builtin' | `tag:${string}`;
+type Filter = CategoryId | 'all' | 'star' | 'builtin' | `tag:${string}`;
+
+/** Who put a product in the catalog: preset (the app's catalog and the home's pre-loaded items) or the user. */
+type Origin = 'all' | 'preset' | 'mine';
+const ORIGINS: { id: Origin; label: string }[] = [
+  { id: 'all', label: '전체' },
+  { id: 'preset', label: '기본 가구' },
+  { id: 'mine', label: '내가 추가' },
+];
 
 /** Shortlist tags carried by a home's own products (e.g. "○○ 후보") become catalog chips. */
 const isListTag = (t: string) => t.endsWith('후보');
@@ -67,6 +75,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
   const notify = useStore((s) => s.notify);
   const [q, setQ] = useState('');
   const [cat, setCat] = useState<Filter>('all');
+  const [origin, setOrigin] = useState<Origin>('all');
   const [brand, setBrand] = useState('');
   const [showUrlForm, setShowUrlForm] = useState(false);
   const [pageUrl, setPageUrl] = useState('');
@@ -76,20 +85,25 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
   const shortlist = project.shortlist;
   const listTags = useMemo(() => Array.from(new Set(project.customProducts.flatMap((p) => (p.tags ?? []).filter(isListTag)))), [project.customProducts]);
   const hasBuiltin = useMemo(() => all.some((p) => p.builtin), [all]);
+  const originCount = useMemo(() => {
+    const mine = all.filter((p) => p.custom).length;
+    return { all: all.length, preset: all.length - mine, mine };
+  }, [all]);
 
   const list = useMemo(() => {
     const qq = q.trim().toLowerCase();
     return all.filter((p) => {
       if ((cat === 'builtin') !== !!p.builtin) return false;
       if (cat === 'star' && !shortlist.includes(p.id)) return false;
-      if (cat === 'mine' && !p.custom) return false;
+      if (origin === 'mine' && !p.custom) return false;
+      if (origin === 'preset' && p.custom) return false;
       if (cat.startsWith('tag:') && !p.tags?.includes(cat.slice(4))) return false;
-      if (!['all', 'star', 'mine', 'builtin'].includes(cat) && !cat.startsWith('tag:') && p.category !== cat) return false;
+      if (!['all', 'star', 'builtin'].includes(cat) && !cat.startsWith('tag:') && p.category !== cat) return false;
       if (brand && p.brand !== brand) return false;
       if (qq && !`${p.name} ${p.brand} ${p.sub ?? ''} ${p.notes ?? ''}`.toLowerCase().includes(qq)) return false;
       return true;
     });
-  }, [all, q, cat, brand, shortlist]);
+  }, [all, q, cat, origin, brand, shortlist]);
 
   const toggleStar = (id: string) =>
     mutate((p) => {
@@ -168,6 +182,20 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
           </form>
         )}
 
+        <div className="seg-grid-3" role="group" aria-label="가구 출처">
+          {ORIGINS.map((o) => (
+            <button
+              key={o.id}
+              className={'seg-btn' + (origin === o.id ? ' on' : '')}
+              aria-pressed={origin === o.id}
+              onClick={() => setOrigin(o.id)}
+              title={o.id === 'preset' ? '앱에 미리 들어 있던 가구' : o.id === 'mine' ? '직접 등록하거나 링크로 불러온 가구' : undefined}
+            >
+              {o.label} <span className="mono">{originCount[o.id]}</span>
+            </button>
+          ))}
+        </div>
+
         <div className="catalog-filter-row">
           <select
             className="brand-select"
@@ -176,7 +204,6 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
             onChange={(e) => setCat(e.target.value as Filter)}
           >
             <option value="all">전체 카테고리</option>
-            <option value="mine">직접 등록</option>
             {listTags.map((t) => (
               <option key={t} value={`tag:${t}`}>
                 {t}
@@ -224,7 +251,11 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
       </div>
 
       {cat === 'star' && !list.length && <div className="empty-hint">가구의 별 버튼을 눌러 후보를 모아 두세요.</div>}
-      {cat !== 'star' && !list.length && <div className="empty-hint">조건에 맞는 가구가 없어요.</div>}
+      {cat !== 'star' && !list.length && (
+        <div className="empty-hint">
+          {origin === 'mine' && !originCount.mine ? '+ 버튼이나 판매 링크로 가구를 추가하면 여기에 모여요.' : '조건에 맞는 가구가 없어요.'}
+        </div>
+      )}
 
       <div className="catalog-grid">
         {list.map((p) => {
