@@ -1,4 +1,4 @@
-import { Crosshair, ExternalLink, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
+import { ExternalLink, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CATEGORIES } from '../catalog/categories';
 import { PRODUCTS, productSearchUrl } from '../catalog/products';
@@ -60,7 +60,6 @@ const isListTag = (t: string) => t.endsWith('후보');
 export function CatalogPanel({ onCustom }: { onCustom: (base?: Product) => void }) {
   const project = useStore((s) => s.project)!;
   const placing = useStore((s) => s.placing);
-  const startPlacing = useStore((s) => s.startPlacing);
   const mutate = useStore((s) => s.mutate);
   const notify = useStore((s) => s.notify);
   const [q, setQ] = useState('');
@@ -168,11 +167,8 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product) => void 
                 </div>
               )}
               <div className="catalog-card-foot" style={{ marginTop: 8 }}>
-                <button className="btn-place" onClick={() => placeNow(p.id)}>
+                <button className="btn-place" title="알맞은 자리에 놓은 뒤 드래그해서 위치를 조정하세요" onClick={() => placeNow(p.id)}>
                   <Plus size={13} /> 배치하기
-                </button>
-                <button className="btn-link-icon" title="3D 화면에서 놓을 곳을 직접 찍기" onClick={() => startPlacing(p.id)}>
-                  <Crosshair size={14} />
                 </button>
                 <a className="btn-link-icon" href={productSearchUrl(p)} target="_blank" rel="noreferrer" title="판매처 보기">
                   <ExternalLink size={14} />
@@ -200,7 +196,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product) => void 
         })}
       </div>
       <p className="mini-note" style={{ marginTop: 12 }}>
-        배치하기 = 알맞은 자리에 바로 놓기(위 거치는 책상 위, 벽걸이는 벽, 커튼은 창가) · <Crosshair size={11} /> = 3D 화면에서 놓을 곳 찍기. <b>근사값</b> 표시 제품은 구매 전 판매처 치수를 확인하세요.
+        배치하기를 누르면 알맞은 자리에 놓여요. 배치 후 드래그해서 위치를 조정하세요. <b>근사값</b> 표시 제품은 구매 전 판매처 치수를 확인하세요.
       </p>
     </div>
   );

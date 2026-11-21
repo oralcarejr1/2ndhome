@@ -822,11 +822,13 @@ textarea {
 
 .catalog-card-foot {
   display: flex;
+  align-items: center;
   gap: 5px;
 }
 .btn-place {
-  flex: 1;
+  flex: 0 0 auto;
   height: 32px;
+  padding: 0 10px;
   border-radius: 8px;
   border: 0;
   background: var(--surface-hover);
