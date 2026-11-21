@@ -1,16 +1,15 @@
-import { Box, ExternalLink, Pencil, Plus, Search, Star, Trash2 } from 'lucide-react';
+import { Box, ExternalLink, Link2, Pencil, Plus, Search, Star, Trash2, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { CATEGORIES } from '../catalog/categories';
 import { PRODUCTS, productSearchUrl } from '../catalog/products';
 import { fmtWon } from '../lib/geometry';
-import { getThumb } from '../lib/thumbs';
 import { normalizeProductUrl } from '../lib/productImport';
-import { resolveMats } from '../models';
+import { getThumb } from '../lib/thumbs';
 import { useStore } from '../store/store';
 import type { CategoryId, Product } from '../types';
 import { placeNow } from './actions';
 
-export function Thumb({ p, size = 64 }: { p: Product; size?: number }) {
+export function Thumb({ p, size }: { p: Product; size?: number }) {
   const ref = useRef<HTMLDivElement>(null);
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
@@ -30,28 +29,31 @@ export function Thumb({ p, size = 64 }: { p: Product; size?: number }) {
     };
   }, [p]);
   return (
-    <div className="catalog-thumb" ref={ref} style={{ width: size, height: size }}>
-      {url ? <img src={url} alt="" /> : <Box size={24} strokeWidth={1.5} aria-hidden="true" />}
+    <div className="catalog-thumb" ref={ref} style={size ? { width: size, height: size } : undefined}>
+      {url ? <img src={url} alt="" /> : <Box size={22} strokeWidth={1.5} aria-hidden="true" />}
     </div>
   );
 }
 
 export function ProductTags({ p }: { p: Product }) {
+  const label = p.custom
+    ? p.asset
+      ? '3D'
+      : '직접'
+    : p.mount && p.mount !== 'floor'
+      ? { wall: '벽', ceiling: '천장', surface: '위', floor: '' }[p.mount]
+      : p.approx
+        ? '근사'
+        : '';
+  if (!label) return null;
+  const cls = p.custom ? 'badge-custom' : p.approx ? 'badge-approx' : 'badge-mount';
+  const title = p.approx ? '치수가 근사값이에요. 구매 전 판매처 상세 치수를 확인하세요.' : undefined;
   return (
-    <>
-      {p.custom && <span className="badge-custom">{p.asset ? '3D 파일' : '직접 등록'}</span>}
-      {p.mount && p.mount !== 'floor' && <span className={'badge-mount mount-' + p.mount}>{{ wall: '벽걸이', ceiling: '천장', surface: '위 거치', floor: '바닥' }[p.mount]}</span>}
-      {p.approx && (
-        <span className="badge-approx" title="치수가 근사값이에요. 구매 전 판매처 상세 치수를 확인하세요.">
-          근사값
-        </span>
-      )}
-      {p.flatpack && <span className="badge-flat">조립식</span>}
-    </>
+    <span className={cls} title={title}>
+      {label}
+    </span>
   );
 }
-
-const mainColor = (p: Product) => Object.values(resolveMats(p))[0]?.color ?? '#ccc';
 
 type Filter = CategoryId | 'all' | 'star' | 'mine' | 'builtin' | `tag:${string}`;
 
@@ -66,6 +68,7 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
   const [q, setQ] = useState('');
   const [cat, setCat] = useState<Filter>('all');
   const [brand, setBrand] = useState('');
+  const [showUrlForm, setShowUrlForm] = useState(false);
   const [pageUrl, setPageUrl] = useState('');
   const [urlError, setUrlError] = useState('');
   const all = useMemo(() => [...project.customProducts, ...PRODUCTS], [project.customProducts]);
@@ -73,10 +76,11 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
   const shortlist = project.shortlist;
   const listTags = useMemo(() => Array.from(new Set(project.customProducts.flatMap((p) => (p.tags ?? []).filter(isListTag)))), [project.customProducts]);
   const hasBuiltin = useMemo(() => all.some((p) => p.builtin), [all]);
+
   const list = useMemo(() => {
     const qq = q.trim().toLowerCase();
     return all.filter((p) => {
-      if ((cat === 'builtin') !== !!p.builtin) return false; // built-ins only under their own chip, as before
+      if ((cat === 'builtin') !== !!p.builtin) return false;
       if (cat === 'star' && !shortlist.includes(p.id)) return false;
       if (cat === 'mine' && !p.custom) return false;
       if (cat.startsWith('tag:') && !p.tags?.includes(cat.slice(4))) return false;
@@ -92,132 +96,198 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
       p.shortlist = p.shortlist.includes(id) ? p.shortlist.filter((x) => x !== id) : [...p.shortlist, id];
     }, false);
 
-  const chips: [Filter, string][] = [
-    ['all', '전체'],
-    ['star', `후보${shortlist.length ? ` ${shortlist.length}` : ''}`],
-    ...listTags.map((t) => [`tag:${t}`, t] as [Filter, string]),
-    ['mine', '직접 등록'],
-    ...CATEGORIES.map((c) => [c.id, c.label] as [Filter, string]),
-    ...(hasBuiltin ? ([['builtin', '붙박이']] as [Filter, string][]) : []),
-  ];
+  const selectCatValue = cat === 'star' ? 'all' : cat;
 
   return (
-    <div className="panel-scroll">
-      <div className="panel-top-actions">
-        <form className="product-link-form" onSubmit={(e) => {
-          e.preventDefault();
-          try {
-            const url = normalizeProductUrl(pageUrl);
-            setUrlError('');
-            onCustom(undefined, url);
-          } catch { setUrlError('판매 페이지의 전체 주소(http 또는 https)를 입력하세요'); }
-        }}>
-          <label htmlFor="catalog-product-url">판매 링크로 후보 추가</label>
-          <div className="product-link-row">
-            <input id="catalog-product-url" className="inp" type="url" required placeholder="https://판매 페이지 주소" value={pageUrl} onChange={(e) => { setPageUrl(e.target.value); setUrlError(''); }} />
-            <button className="btn-secondary" type="submit"><Plus size={14} /> 불러오기</button>
-          </div>
-          {urlError && <p className="note" role="alert">{urlError}</p>}
-        </form>
+    <div className="panel-scroll catalog-scroll">
+      <div className="catalog-head">
         <div className="search-row">
           <div className="search-box">
-            <Search size={14} className="muted-icon" />
+            <Search size={13} className="muted-icon" />
             <input placeholder="가구·브랜드 검색" value={q} onChange={(e) => setQ(e.target.value)} />
+            {q && (
+              <button className="icon-xs" onClick={() => setQ('')} aria-label="검색어 지우기">
+                <X size={12} />
+              </button>
+            )}
           </div>
-        </div>
-        <button className="btn-secondary btn-register" onClick={() => onCustom()} title="판매 페이지의 치수·색·가격이나 제조사 3D 파일로 내 후보 만들기">
-          <Plus size={14} /> 후보 직접 등록
-        </button>
-      </div>
-      <div className="cat-chips cat-scroll">
-        {chips.map(([id, label]) => (
-          <button key={id} className={'chip sm' + (cat === id ? (id === 'star' ? ' chip-star active' : ' active') : '')} aria-pressed={cat === id} onClick={() => setCat(id)}>
-            {id === 'star' && <Star size={16} aria-hidden="true" />}
-            {label}
+          <button
+            className={'btn-icon-sq' + (showUrlForm ? ' on' : '')}
+            onClick={() => setShowUrlForm((x) => !x)}
+            title="판매 페이지 링크로 후보 불러오기"
+            aria-label="판매 링크 불러오기"
+            aria-pressed={showUrlForm}
+          >
+            <Link2 size={14} />
           </button>
-        ))}
-      </div>
-      <div className="row catalog-filters">
-        <select className="brand-select" value={brand} onChange={(e) => setBrand(e.target.value)}>
-          <option value="">모든 브랜드 ({list.length}개)</option>
+          <button className="btn-icon-sq" onClick={() => onCustom()} title="구매 후보 직접 등록" aria-label="후보 직접 등록">
+            <Plus size={14} />
+          </button>
+        </div>
+
+        {showUrlForm && (
+          <form
+            className="product-link-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              try {
+                const url = normalizeProductUrl(pageUrl);
+                setUrlError('');
+                setShowUrlForm(false);
+                setPageUrl('');
+                onCustom(undefined, url);
+              } catch {
+                setUrlError('http 또는 https 전체 주소를 입력하세요');
+              }
+            }}
+          >
+            <label htmlFor="catalog-product-url">판매 페이지 주소로 불러오기</label>
+            <div className="product-link-row">
+              <input
+                id="catalog-product-url"
+                className="inp"
+                type="url"
+                required
+                placeholder="https://판매 페이지 주소"
+                value={pageUrl}
+                onChange={(e) => {
+                  setPageUrl(e.target.value);
+                  setUrlError('');
+                }}
+              />
+              <button className="btn-primary" type="submit" style={{ height: 30, padding: '0 10px' }}>
+                불러오기
+              </button>
+            </div>
+            {urlError && (
+              <p className="note" role="alert" style={{ color: 'var(--bad)' }}>
+                {urlError}
+              </p>
+            )}
+          </form>
+        )}
+
+        <div className="catalog-filter-row">
+          <select
+            className="brand-select"
+            aria-label="카테고리 선택"
+            value={selectCatValue}
+            onChange={(e) => setCat(e.target.value as Filter)}
+          >
+            <option value="all">전체 카테고리</option>
+            <option value="mine">직접 등록</option>
+            {listTags.map((t) => (
+              <option key={t} value={`tag:${t}`}>
+                {t}
+              </option>
+            ))}
+            {CATEGORIES.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
+              </option>
+            ))}
+            {hasBuiltin && <option value="builtin">붙박이</option>}
+          </select>
+          <button
+            className={'cat-star-btn' + (cat === 'star' ? ' on' : '')}
+            aria-pressed={cat === 'star'}
+            onClick={() => setCat(cat === 'star' ? 'all' : 'star')}
+            title="즐겨찾기 후보만 보기"
+          >
+            <Star size={12} fill={cat === 'star' ? 'currentColor' : 'none'} />
+            <span className="mono">{shortlist.length}</span>
+          </button>
+        </div>
+
+        <select className="brand-select" aria-label="브랜드 필터" value={brand} onChange={(e) => setBrand(e.target.value)}>
+          <option value="">모든 브랜드 ({list.length})</option>
           {brands.map((b) => (
             <option key={b} value={b}>
               {b}
             </option>
           ))}
         </select>
+
+        {listTags.length > 0 && (
+          <div className="cat-chips cat-scroll" style={{ marginBottom: 0 }}>
+            {listTags.map((t) => {
+              const id: Filter = `tag:${t}`;
+              return (
+                <button key={id} className={'chip sm' + (cat === id ? ' active' : '')} aria-pressed={cat === id} onClick={() => setCat(cat === id ? 'all' : id)}>
+                  {t}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
-      {cat === 'star' && !list.length && <div className="empty-hint">가구의 별 버튼을 눌러 후보를 모으세요</div>}
-      <div className="catalog-list">
+
+      {cat === 'star' && !list.length && <div className="empty-hint">가구의 별 버튼을 눌러 후보를 모아 두세요.</div>}
+      {cat !== 'star' && !list.length && <div className="empty-hint">조건에 맞는 가구가 없어요.</div>}
+
+      <div className="catalog-grid">
         {list.map((p) => {
           const starred = shortlist.includes(p.id);
+          const fullTitle = `${p.name} (${p.dims.w}×${p.dims.d}×H${p.dims.h}cm)${p.notes ? `\n${p.notes}` : ''}`;
           return (
-            <div key={p.id} className={'catalog-card' + (placing?.productId === p.id ? ' placing' : '')}>
-              <div className="catalog-card-head">
-                <div className="catalog-brand-row">
-                  <span className="color-dot" style={{ background: mainColor(p) }} />
-                  <span className="catalog-brand">{p.brand}</span>
+            <div key={p.id} className={'catalog-tile' + (placing?.productId === p.id ? ' placing' : '')} title={fullTitle}>
+              <div className="catalog-tile-stage">
+                <Thumb p={p} />
+                <div className="tile-top-left">
                   <ProductTags p={p} />
                 </div>
-                <button className={'icon-star' + (starred ? ' on' : '')} title={starred ? '후보에서 빼기' : '후보에 담기'} aria-label={`${p.name} ${starred ? '후보에서 빼기' : '후보에 담기'}`} aria-pressed={starred} onClick={() => toggleStar(p.id)}>
-                  <Star size={15} fill={starred ? 'currentColor' : 'none'} />
+                <button
+                  className={'tile-star' + (starred ? ' on' : '')}
+                  title={starred ? '후보에서 빼기' : '후보에 담기'}
+                  aria-label={`${p.name} ${starred ? '후보에서 빼기' : '후보에 담기'}`}
+                  aria-pressed={starred}
+                  onClick={() => toggleStar(p.id)}
+                >
+                  <Star size={13} fill={starred ? 'currentColor' : 'none'} />
                 </button>
-              </div>
-              <div className="catalog-card-body">
-                <Thumb p={p} />
-                <div className="catalog-main">
-                  <div className="catalog-title" style={{ marginTop: 0 }}>
-                    {p.name}
-                  </div>
-                  <div className="catalog-specs">
-                    <span className="mono">
-                      {p.dims.w}×{p.dims.d}×H{p.dims.h}
-                    </span>
-                    {p.price ? <span className="price-tag mono">{fmtWon(p.price)}</span> : null}
-                  </div>
-                  {p.notes && <p className="catalog-desc">{p.notes}</p>}
-                </div>
-              </div>
-              {p.variants && p.variants.length > 1 && (
-                <div className="mini-swatches" style={{ marginTop: 8 }}>
-                  {p.variants.map((v) => (
-                    <span key={v.name} className="mini-swatch" title={v.name} style={{ background: Object.values(v.mats)[0]?.color }} />
-                  ))}
-                </div>
-              )}
-              <div className="catalog-card-foot" style={{ marginTop: 8 }}>
-                <button className="btn-place" title="알맞은 자리에 놓은 뒤 드래그해서 위치를 조정하세요" onClick={() => placeNow(p.id)}>
-                  <Plus size={13} /> 배치하기
-                </button>
-                <a className="btn-link-icon" href={productSearchUrl(p)} target="_blank" rel="noreferrer" title="판매처 보기">
-                  <ExternalLink size={14} />
-                </a>
-                <button className="btn-link-icon" title={p.custom ? '수정' : '이 제품 바탕으로 치수·색 수정해 내 후보 만들기'} onClick={() => onCustom(p)}>
-                  <Pencil size={13} />
-                </button>
-                {p.custom && (
-                  <button
-                    className="btn-link-icon danger"
-                    title="직접 등록한 후보 삭제"
-                    onClick={() => {
-                      mutate((d) => {
-                        d.customProducts = d.customProducts.filter((x) => x.id !== p.id);
-                      });
-                      notify('직접 등록한 후보가 삭제되었어요');
-                    }}
-                  >
-                    <Trash2 size={13} />
+                <div className="tile-overlay">
+                  <button className="tile-place-btn" onClick={() => placeNow(p.id)} title="배치하기">
+                    <Plus size={12} /> 배치
                   </button>
-                )}
+                  <div className="tile-mini-acts">
+                    <a className="tile-mini-btn" href={productSearchUrl(p)} target="_blank" rel="noreferrer" title="판매처 보기" aria-label="판매처 보기">
+                      <ExternalLink size={11} />
+                    </a>
+                    <button className="tile-mini-btn" title={p.custom ? '수정' : '치수·색 수정해 내 후보 만들기'} aria-label="수정" onClick={() => onCustom(p)}>
+                      <Pencil size={11} />
+                    </button>
+                    {p.custom && (
+                      <button
+                        className="tile-mini-btn danger"
+                        title="후보 삭제"
+                        aria-label="삭제"
+                        onClick={() => {
+                          mutate((d) => {
+                            d.customProducts = d.customProducts.filter((x) => x.id !== p.id);
+                          });
+                          notify('직접 등록한 후보가 삭제되었어요');
+                        }}
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <div className="catalog-tile-meta">
+                <div className="tile-brand">{p.brand}</div>
+                <div className="tile-name">{p.name}</div>
+                <div className="tile-specs mono">
+                  <span>
+                    {p.dims.w}×{p.dims.d}
+                  </span>
+                  {p.price ? <span className="tile-price">{fmtWon(p.price)}</span> : null}
+                </div>
               </div>
             </div>
           );
         })}
       </div>
-      <p className="mini-note" style={{ marginTop: 12 }}>
-        배치한 가구는 드래그해서 위치를 조정할 수 있어요. <b>근사값</b> 제품은 구매 전 판매처 치수를 확인하세요.
-      </p>
     </div>
   );
 }
-

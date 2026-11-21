@@ -14,10 +14,10 @@ function setup() {
   if (renderer) return true;
   try {
     const canvas = document.createElement('canvas');
-    canvas.width = 160;
-    canvas.height = 160;
+    canvas.width = 240;
+    canvas.height = 240;
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
-    renderer.setSize(160, 160, false);
+    renderer.setSize(240, 240, false);
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     scene = new THREE.Scene();
