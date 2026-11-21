@@ -130,6 +130,7 @@ function Studio() {
   const [leftTab, setLeftTab] = useState<LeftTab>('catalog');
   const [splitMood, setSplitMood] = useState(false);
   const [editPlan, setEditPlan] = useState(false);
+  const [planPanelEl, setPlanPanelEl] = useState<HTMLDivElement | null>(null);
   const [compare, setCompare] = useState(false);
   const [editor, setEditor] = useState<{ base?: Product; importUrl?: string } | null>(null);
   const [help, setHelp] = useState(false);
@@ -153,9 +154,18 @@ function Studio() {
   }, [selection, isMobile]);
   useKeys();
 
+  const toggleEditPlan = (on: boolean) => {
+    setEditPlan(on);
+    if (on) {
+      setSplitMood(false);
+      useStore.setState({ rightOpen: true });
+    }
+  };
+
   const stage3d = view === '3d' || view === 'top' || view === 'walk';
+  const planEditActive = view === '2d' && editPlan;
   const showSelectionBar =
-    (view === '3d' || view === 'top' || view === '2d') &&
+    (view === '3d' || view === 'top' || (view === '2d' && !editPlan)) &&
     selection.length > 0 &&
     !placing &&
     !placingPerson &&
@@ -176,7 +186,7 @@ function Studio() {
         <div style={{ position: 'absolute', inset: 0, display: stage3d ? 'block' : 'none' }}>
           <Viewport />
         </div>
-        {view === '2d' && <PlanEditor editing={editPlan} onToggleEdit={setEditPlan} />}
+        {view === '2d' && <PlanEditor editing={editPlan} onToggleEdit={toggleEditPlan} panelEl={planPanelEl} />}
         {view === 'mood' && <Moodboard />}
 
         <Header
@@ -235,11 +245,13 @@ function Studio() {
                   <Moodboard compact />
                 </div>
               </div>
+            ) : planEditActive ? (
+              <div className="panel-scroll" ref={setPlanPanelEl} />
             ) : (
               <Inspector
                 onEditPlan={() => {
                   setView('2d');
-                  setEditPlan(true);
+                  toggleEditPlan(true);
                 }}
               />
             )}

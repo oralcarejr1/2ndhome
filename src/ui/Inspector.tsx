@@ -7,20 +7,13 @@ import {
   EyeOff,
   FlipHorizontal,
   Group,
-  Layers,
   Lock,
-  Palette,
   PencilRuler,
-  RefreshCw,
   RotateCcw,
   RotateCw,
-  Ruler,
-  SlidersHorizontal,
-  Sun,
   Trash2,
   Unlock,
   UserCheck,
-  Wrench,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { catLabel } from '../catalog/categories';
@@ -50,7 +43,7 @@ export const FLOORS: { v: FloorKind; l: string; c: string }[] = [
   { v: 'bigtile', l: '포세린 베이지', c: '#e9e3d9' },
   { v: 'tile', l: '타일 60', c: '#dedbd6' },
   { v: 'vinyl', l: '장판(우드)', c: '#d9c29d' },
-  { v: 'decotile', l: '데코타일 블랙(유광)', c: '#262524' },
+  { v: 'decotile', l: '데코타일 블랙', c: '#262524' },
   { v: 'concrete', l: '콘크리트', c: '#c9c8c4' },
   { v: 'terrazzo', l: '테라조', c: '#ebe6df' },
   { v: 'carpet', l: '카펫', c: '#c9c0b3' },
@@ -67,13 +60,6 @@ const WALLS = [
   { hex: '#e8d9cf', name: '피치' },
   { hex: '#8f9a8b', name: '올리브' },
   { hex: '#55606b', name: '슬레이트' },
-];
-
-const TIMES: [string, string, number, boolean][] = [
-  ['morning', '아침 8시', 8, false],
-  ['noon', '한낮 13시', 13, false],
-  ['golden', '노을 17시', 17, false],
-  ['night', '밤 + 조명', 21, true],
 ];
 
 export function moodColorsOf(p: { moodboard: { palette?: string[]; color?: string }[] }) {
@@ -101,17 +87,13 @@ export function Inspector({ onEditPlan }: { onEditPlan: () => void }) {
   );
 }
 
-// ------------------------------------------------------------------ room settings (nothing selected)
+// ------------------------------------------------------------------ room finishes (nothing selected)
 function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
   const project = useStore((s) => s.project)!;
   const v = activeVersion(project)!;
   const mutateVersion = useStore((s) => s.mutateVersion);
   const mutate = useStore((s) => s.mutate);
   const updateItems = useStore((s) => s.updateItems);
-  const show = useStore((s) => s.show);
-  const setShow = useStore((s) => s.setShow);
-  const snap = useStore((s) => s.snap);
-  const setSnap = useStore((s) => s.setSnap);
   const [roomId, setRoomId] = useState('');
   const f = v.finishes;
   const moodColors = moodColorsOf(project);
@@ -122,85 +104,18 @@ function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
     const p = getProduct(i.productId, project);
     return p?.model === 'case' && p.ergo === 'wardrobe';
   });
-  const time = TIMES.find(([, , h, l]) => Math.abs(h - f.hour) < 1.5 && l === f.lampsOn)?.[0];
+
   return (
-    <div>
+    <div className="insp-stack">
       <div className="insp-header">
-        <h4>{project.name.replace(/\s*\(.*\)$/, '')} 공간 마감 & 환경</h4>
-        <p className="insp-sub">3D 화면의 가구를 클릭하면 상세 편집과 후보 교체가 열립니다</p>
+        <div className="insp-eyebrow">공간 마감</div>
+        <h4>{project.name.replace(/\s*\(.*\)$/, '')}</h4>
       </div>
-
-      <div className="insp-section">
-        <div className="insp-label">
-          <Sun size={13} /> 채광 & 시간대
-        </div>
-        <div className="seg-grid-4">
-          {TIMES.map(([id, label, hour, lamps]) => (
-            <button key={id} className={'seg-btn' + (time === id ? ' on' : '')} onClick={() => mutateVersion((vv) => Object.assign(vv.finishes, { hour, lampsOn: lamps }), false)}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <input type="range" min={5} max={23} step={0.5} value={f.hour} onChange={(e) => mutateVersion((vv) => (vv.finishes.hour = +e.target.value), false)} style={{ marginTop: 8 }} />
-        <div className="seg-grid-2" style={{ marginTop: 6 }}>
-          <button className={'toggle-pill' + (f.lampsOn ? ' on' : '')} onClick={() => mutateVersion((vv) => (vv.finishes.lampsOn = !vv.finishes.lampsOn), false)}>
-            <span>스탠드·펜던트</span>
-            <b>{f.lampsOn ? '켜짐' : '꺼짐'}</b>
-          </button>
-          <button className={'toggle-pill' + (f.ceilingLights ? ' on' : '')} onClick={() => mutateVersion((vv) => (vv.finishes.ceilingLights = !vv.finishes.ceilingLights), false)}>
-            <span>천장등</span>
-            <b>{f.ceilingLights ? '켜짐' : '꺼짐'}</b>
-          </button>
-        </div>
-      </div>
-
-      <div className="insp-section">
-        <div className="insp-label">벽 표시 모드</div>
-        <div className="seg-grid-4">
-          {(
-            [
-              ['auto', '자동 투시'],
-              ['full', '전체 벽'],
-              ['low', '낮은 벽'],
-              ['hidden', '숨김'],
-            ] as const
-          ).map(([id, label]) => (
-            <button key={id} className={'seg-btn' + (show.walls === id ? ' on' : '')} onClick={() => setShow({ walls: id })}>
-              {label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {(doors.length > 0 || wardrobe) && (
-        <div className="insp-section">
-          <div className="insp-label">
-            <DoorOpen size={13} /> 문·붙박이장 개폐 시뮬레이션
-          </div>
-          <div className="seg-grid-2">
-            {doors.map((o) => {
-              const open = !!f.doorsOpen?.[o.id];
-              return (
-                <button key={o.id} className={'toggle-pill' + (open ? ' on' : '')} onClick={() => mutateVersion((vv) => (vv.finishes.doorsOpen = { ...(vv.finishes.doorsOpen ?? {}), [o.id]: !open }), false)}>
-                  <span>{doorName(o.id, o.isEntry)}</span>
-                  <b>{open ? '열림' : '닫힘'}</b>
-                </button>
-              );
-            })}
-            {wardrobe && (
-              <button className={'toggle-pill' + (wardrobe.params?.open ? ' on' : '')} onClick={() => updateItems([wardrobe.id], (x) => (x.params = { ...(x.params ?? {}), open: !x.params?.open }), false)}>
-                <span>붙박이장 문</span>
-                <b>{wardrobe.params?.open ? '열림' : '닫힘'}</b>
-              </button>
-            )}
-          </div>
-        </div>
-      )}
 
       <div className="insp-section">
         <div className="insp-label-row">
-          <span className="insp-label">바닥재 마감</span>
-          <select className="paste-zone-sel" value={roomId} onChange={(e) => setRoomId(e.target.value)}>
+          <span className="insp-label">바닥재</span>
+          <select className="paste-zone-sel" value={roomId} onChange={(e) => setRoomId(e.target.value)} aria-label="방 선택">
             <option value="">모든 방</option>
             {project.plan.rooms.map((r) => (
               <option key={r.id} value={r.id}>
@@ -233,7 +148,14 @@ function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
         <div className="insp-label">벽지 컬러</div>
         <div className="swatch-row">
           {WALLS.map((w) => (
-            <button key={w.hex} className={'swatch-btn' + (f.wallColor === w.hex ? ' on' : '')} style={{ background: w.hex }} title={w.name} onClick={() => mutateVersion((vv) => (vv.finishes.wallColor = w.hex))} />
+            <button
+              key={w.hex}
+              className={'swatch-btn' + (f.wallColor === w.hex ? ' on' : '')}
+              style={{ background: w.hex }}
+              title={w.name}
+              aria-label={w.name}
+              onClick={() => mutateVersion((vv) => (vv.finishes.wallColor = w.hex))}
+            />
           ))}
           <label className="swatch-custom" title="직접 색상 선택">
             <input type="color" value={f.wallColor} onChange={(e) => mutateVersion((vv) => (vv.finishes.wallColor = e.target.value), false)} />+
@@ -241,10 +163,16 @@ function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
         </div>
         {moodColors.length > 0 && (
           <div className="mood-swatch-strip">
-            <span className="mini-cap">무드보드 추출 컬러:</span>
+            <span className="mini-cap">무드보드 추출</span>
             <div className="swatch-row">
               {moodColors.slice(0, 10).map((hex) => (
-                <button key={hex} className={'swatch-btn sm' + (f.wallColor === hex ? ' on' : '')} style={{ background: hex }} title={`벽지에 적용 (${hex})`} onClick={() => mutateVersion((vv) => (vv.finishes.wallColor = hex))} />
+                <button
+                  key={hex}
+                  className={'swatch-btn sm' + (f.wallColor === hex ? ' on' : '')}
+                  style={{ background: hex }}
+                  title={`벽지에 적용 (${hex})`}
+                  onClick={() => mutateVersion((vv) => (vv.finishes.wallColor = hex))}
+                />
               ))}
             </div>
           </div>
@@ -252,47 +180,50 @@ function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
       </div>
 
       <div className="insp-section">
-        <div className="insp-label">
-          천장 높이 <b className="mono">{Math.round(project.plan.ceiling)} cm</b>
+        <div className="insp-label-row">
+          <span className="insp-label">천장 높이</span>
+          <b className="mono" style={{ fontSize: 12 }}>
+            {Math.round(project.plan.ceiling)} cm
+          </b>
         </div>
         <input type="range" min={210} max={300} step={1} value={project.plan.ceiling} onChange={(e) => mutate((p) => (p.plan.ceiling = +e.target.value), false)} />
       </div>
 
-      <div className="insp-section">
-        <div className="insp-label">배치 보조 & 가이드</div>
-        <label className="chk-row">
-          <input type="checkbox" checked={snap.walls && snap.objects} onChange={(e) => setSnap({ walls: e.target.checked, objects: e.target.checked, grid: e.target.checked ? 1 : 0, angle: e.target.checked ? 15 : 0 })} />
-          <span>자석 스냅 (1cm · 벽/가구 밀착 · 회전 15°) — 끌 때 Alt로 잠깐 끄기</span>
-        </label>
-        <label className="chk-row">
-          <input type="checkbox" checked={show.dims} onChange={(e) => setShow({ dims: e.target.checked })} />
-          <span>선택 가구 치수와 4방향 여유 거리(cm) 표시</span>
-        </label>
-        <label className="chk-row">
-          <input type="checkbox" checked={show.clearance} onChange={(e) => setShow({ clearance: e.target.checked })} />
-          <span>사용 공간 가이드 (문·서랍 열기, 의자 빼기)</span>
-        </label>
-        <label className="chk-row">
-          <input type="checkbox" checked={show.heatmap} onChange={(e) => setShow({ heatmap: e.target.checked })} />
-          <span>동선 레이어 (통로 폭 색칠)</span>
-        </label>
-        <label className="chk-row">
-          <input type="checkbox" checked={show.collisions} onChange={(e) => setShow({ collisions: e.target.checked })} />
-          <span>겹침·문 막힘 빨간/주황 표시</span>
-        </label>
-        <label className="chk-row">
-          <input type="checkbox" checked={show.grid} onChange={(e) => setShow({ grid: e.target.checked })} />
-          <span>바닥 50cm 격자 표시</span>
-        </label>
-        <label className="chk-row">
-          <input type="checkbox" checked={show.labels} onChange={(e) => setShow({ labels: e.target.checked })} />
-          <span>방·가구 이름표 (탑뷰)</span>
-        </label>
-      </div>
+      {(doors.length > 0 || wardrobe) && (
+        <div className="insp-section">
+          <div className="insp-label">
+            <DoorOpen size={12} /> 개폐 시뮬레이션
+          </div>
+          <div className="seg-grid-2">
+            {doors.map((o) => {
+              const open = !!f.doorsOpen?.[o.id];
+              return (
+                <button
+                  key={o.id}
+                  className={'toggle-pill' + (open ? ' on' : '')}
+                  onClick={() => mutateVersion((vv) => (vv.finishes.doorsOpen = { ...(vv.finishes.doorsOpen ?? {}), [o.id]: !open }), false)}
+                >
+                  <span>{doorName(o.id, o.isEntry)}</span>
+                  <b>{open ? '열림' : '닫힘'}</b>
+                </button>
+              );
+            })}
+            {wardrobe && (
+              <button
+                className={'toggle-pill' + (wardrobe.params?.open ? ' on' : '')}
+                onClick={() => updateItems([wardrobe.id], (x) => (x.params = { ...(x.params ?? {}), open: !x.params?.open }), false)}
+              >
+                <span>붙박이장</span>
+                <b>{wardrobe.params?.open ? '열림' : '닫힘'}</b>
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="insp-section">
         <button className="btn-secondary full-width" onClick={onEditPlan}>
-          <PencilRuler size={14} /> 도면 편집 (벽·문·창·방 · 도면 이미지 따라 그리기)
+          <PencilRuler size={13} /> 2D 도면 편집 열기
         </button>
         {project.info?.planNote && <p className="mini-note">{project.info.planNote}</p>}
       </div>
@@ -300,7 +231,7 @@ function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
   );
 }
 
-// ------------------------------------------------------------------ single item
+// ------------------------------------------------------------------ single item (2-tab progressive disclosure)
 function swapPlace(it: PlacedItem, from: Product, to: Product) {
   const oldD = (it.dims ?? from.dims).d;
   const { uz } = itemAxes(it.rot);
@@ -319,6 +250,7 @@ function ItemInspector({ it }: { it: PlacedItem }) {
   const notify = useStore((s) => s.notify);
   const issues = useIssues().get(it.id) ?? [];
   const prod = getProduct(it.productId, project);
+  const [tab, setTab] = useState<'basic' | 'detail'>('basic');
   const [swapQ, setSwapQ] = useState('');
   const [arr, setArr] = useState({ n: 3, gap: 0, dir: 'right' as 'right' | 'left' | 'front' | 'back' });
   const [ring, setRing] = useState({ chair: 'chair-wishbone', n: 4 });
@@ -339,9 +271,10 @@ function ItemInspector({ it }: { it: PlacedItem }) {
   const g = (side: string) => gaps.find((x) => x.side === side);
   const fmtGap = (side: string) => {
     const x = g(side);
-    return x ? `${Math.round(x.dist)}cm` : '–';
+    return x ? `${Math.round(x.dist)}` : '–';
   };
   const ceilGap = project.plan.ceiling - (it.y + dims.h);
+  const showCeil = ceilGap < 40 || prod.mount === 'wall' || prod.mount === 'ceiling';
 
   const doSwap = (to: Product) => {
     const pos = swapPlace(it, prod, to);
@@ -358,8 +291,9 @@ function ItemInspector({ it }: { it: PlacedItem }) {
       set.delete(to.id);
       x.alts = [...set];
     });
-    notify(`'${to.name}' (${to.dims.w}×${to.dims.d}cm)로 교체됨 — 뒤쪽 면 위치 유지`);
+    notify(`'${to.name}' (${to.dims.w}×${to.dims.d}cm)로 교체했어요`);
   };
+
   const toWall = () => {
     const w = nearestWall(project.plan, [it.x, it.z], 600);
     if (!w) return notify('가까운 벽이 없어요');
@@ -371,6 +305,7 @@ function ItemInspector({ it }: { it: PlacedItem }) {
       x.z = w.pt[1] + w.n[1] * off;
     });
   };
+
   const setMount = (m: Mount) => {
     if (m === 'floor') up((x) => (x.y = 0));
     else if (m === 'wall') {
@@ -378,7 +313,6 @@ function ItemInspector({ it }: { it: PlacedItem }) {
       up((x) => (x.y = Math.max(80, x.y || 120)));
     } else if (m === 'ceiling') up((x) => (x.y = project.plan.ceiling - dims.h));
     else {
-      // stack onto the highest surface under the item
       const res = resolveItems(project, v).filter((r) => r.it.id !== it.id && r.prod.mount !== 'ceiling' && r.prod.model !== 'rug');
       const under = res.filter((r) => {
         const [lx, lz] = [it.x - r.it.x, it.z - r.it.z];
@@ -386,10 +320,12 @@ function ItemInspector({ it }: { it: PlacedItem }) {
       });
       const top = under.reduce((a, r) => Math.max(a, r.y1), 0);
       up((x) => (x.y = top || 74));
-      notify(top ? `아래 가구 윗면(${Math.round(top)}cm)에 올렸어요` : '아래에 가구가 없어 책상 높이(74cm)로 올렸어요');
+      notify(top ? `아래 가구 윗면(${Math.round(top)}cm)에 올렸어요` : '책상 높이(74cm)로 올렸어요');
     }
   };
+
   const mountNow: Mount = it.y < 1 ? 'floor' : prod.mount === 'ceiling' || it.y + dims.h > project.plan.ceiling - 3 ? 'ceiling' : prod.mount === 'wall' ? 'wall' : 'surface';
+
   const arrayDup = () => {
     const { ux, uz } = itemAxes(it.rot);
     const step = arr.dir === 'right' || arr.dir === 'left' ? dims.w + arr.gap : dims.d + arr.gap;
@@ -404,6 +340,7 @@ function ItemInspector({ it }: { it: PlacedItem }) {
     });
     select([it.id, ...ids]);
   };
+
   const chairsAround = () => {
     const ch = getProduct(ring.chair, project);
     if (!ch) return;
@@ -431,25 +368,20 @@ function ItemInspector({ it }: { it: PlacedItem }) {
     });
     select([it.id, ...ids]);
   };
+
   const isTable = prod.model === 'table' && ['table', 'desk'].includes(prod.category);
   const resized = !!it.dims && !prod.custom && prod.brand !== '기본형' && !prod.builtin;
 
   return (
-    <div>
+    <div className="insp-stack">
       <div className="insp-header">
-        <div className="insp-title-row">
-          <input className="insp-name-input" value={it.label ?? prod.name} onChange={(e) => up((x) => (x.label = e.target.value && e.target.value !== prod.name ? e.target.value : undefined), false)} />
-          <a className="btn-link-icon" href={productSearchUrl(prod)} target="_blank" rel="noreferrer" title="판매처 보기">
-            <ExternalLink size={14} />
-          </a>
-        </div>
-        <div className="insp-meta-row">
-          <span className="pill-soft">{prod.brand}</span>
-          <span className="pill-soft">{catLabel(prod.category)}</span>
-          {prod.price ? <span className="pill-soft mono">{fmtWon(prod.price)}</span> : null}
-          {prod.approx && <span className="badge-approx">근사값</span>}
+        <div className="insp-meta-line">
+          <span>
+            {prod.brand} · {catLabel(prod.category)}
+            {prod.price ? ` · ${fmtWon(prod.price)}` : ''}
+          </span>
           {!it.locked && (
-            <select className="paste-zone-sel" style={{ marginLeft: 0 }} value={it.status ?? 'candidate'} onChange={(e) => up((x) => (x.status = e.target.value as PlacedItem['status']))}>
+            <select className="status-select" value={it.status ?? 'candidate'} onChange={(e) => up((x) => (x.status = e.target.value as PlacedItem['status']))} aria-label="구매 상태">
               {STATUS.map((s) => (
                 <option key={s.v} value={s.v}>
                   {s.l}
@@ -458,322 +390,358 @@ function ItemInspector({ it }: { it: PlacedItem }) {
             </select>
           )}
         </div>
-        {prod.notes && <p className="insp-sub">{prod.notes}</p>}
+        <div className="insp-title-row">
+          <input
+            className="insp-name-input"
+            value={it.label ?? prod.name}
+            onChange={(e) => up((x) => (x.label = e.target.value && e.target.value !== prod.name ? e.target.value : undefined), false)}
+            aria-label="가구 이름"
+          />
+          <a className="btn-link-icon" href={productSearchUrl(prod)} target="_blank" rel="noreferrer" title="판매처 보기" aria-label="판매처 보기">
+            <ExternalLink size={13} />
+          </a>
+        </div>
+        {prod.approx && <span className="badge-approx" style={{ display: 'inline-block', marginTop: 4 }}>근사값 · 구매 전 실측 확인</span>}
       </div>
 
-      <div className={'status-banner lvl-' + lvl}>{lvl === 'ok' ? '✓ 충돌·간섭 없음 (배치 가능)' : issues.map((x) => x.msg).join(' · ')}</div>
-      {it.locked && <div className="status-banner lvl-warn">🔒 고정(붙박이) — 옮기려면 아래에서 고정을 푸세요</div>}
-
-      <button className="btn-secondary full-width" style={{ marginBottom: 8 }} onClick={() => testWithHuman(it, prod)}>
-        <UserCheck size={14} />
-        <span>{prod.category === 'bed' ? '사람 눕혀서 침대 사이즈·여유 확인' : prod.category === 'sofa' || prod.category === 'chair' ? '사람 앉혀서 다리공간·시선 확인' : '사람 앞에 세워 사용 공간 확인'}</span>
-      </button>
-
-      <div className="gap-readout">
-        <div>
-          <span>좌</span>
-          <b>{fmtGap('left')}</b>
-        </div>
-        <div>
-          <span>우</span>
-          <b>{fmtGap('right')}</b>
-        </div>
-        <div>
-          <span>앞</span>
-          <b>{fmtGap('front')}</b>
-        </div>
-        <div>
-          <span>뒤</span>
-          <b>{fmtGap('back')}</b>
-        </div>
-        <div>
-          <span>천장여유</span>
-          <b>{Math.round(ceilGap)}cm</b>
-        </div>
-      </div>
-
-      {(alts.length > 0 || ranked.length > 0) && !prod.builtin && (
-        <div className="insp-section swap-section">
-          <div className="insp-label">
-            <RefreshCw size={13} /> 이 자리에 다른 실제 판매 후보 바로 교체
-          </div>
-          {alts.length > 0 && (
-            <div className="mat-chips">
-              {alts.map((a) => (
-                <button key={a.id} className="chip sm" onClick={() => doSwap(a)} title={`${a.dims.w}×${a.dims.d}×${a.dims.h}`}>
-                  ⇄ {a.name.length > 14 ? a.name.slice(0, 14) + '…' : a.name}
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="search-box" style={{ height: 30, marginBottom: 6 }}>
-            <input placeholder={`${catLabel(prod.category)} ${sameCat.length}개 중 검색`} value={swapQ} onChange={(e) => setSwapQ(e.target.value)} />
-          </div>
-          <div className="swap-list">
-            {ranked.slice(0, 30).map((cand) => (
-              <button key={cand.id} className="swap-card" onClick={() => doSwap(cand)}>
-                <span className="color-dot" style={{ background: Object.values(resolveMats(cand))[0]?.color }} />
-                <div className="swap-card-info">
-                  <div className="swap-name">{cand.name}</div>
-                  <div className="swap-sub mono">
-                    {cand.brand} · {cand.dims.w}×{cand.dims.d}×H{cand.dims.h}
-                    {cand.price ? ` · ${fmtWon(cand.price)}` : ''}
-                  </div>
-                </div>
-              </button>
-            ))}
-          </div>
+      {/* Only show banners when there is an actual warning/collision or lock */}
+      {lvl !== 'ok' && <div className={'status-banner lvl-' + lvl}>{issues.map((x) => x.msg).join(' · ')}</div>}
+      {it.locked && (
+        <div className="status-banner lvl-warn" style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+          <Lock size={12} /> 고정됨 · 이동하려면 고정을 해제하세요
         </div>
       )}
 
-      <div className="insp-section">
-        <div className="insp-label-row">
-          <span className="insp-label">
-            <Ruler size={13} /> 실측 크기 (cm)
-          </span>
-          {it.dims && (
-            <button className="btn-xs" onClick={() => up((x) => (x.dims = undefined))}>
-              제품 크기로
-            </button>
-          )}
-        </div>
-        <div className="dim-grid-3">
-          {(
-            [
-              ['w', '가로 W'],
-              ['d', '깊이 D'],
-              ['h', '높이 H'],
-            ] as const
-          ).map(([k, l]) => (
-            <label key={k}>
-              <span>{l}</span>
-              <Num value={dims[k]} min={0.5} onChange={(val) => up((x) => (x.dims = { ...dims, [k]: val }))} />
-            </label>
-          ))}
-        </div>
-        {resized && <div className="callout warn">판매 제품의 크기를 바꿨어요 — 실제 제품과 달라요.</div>}
+      {/* 2-Tab Progressive Disclosure */}
+      <div className="insp-seg-tabs" role="tablist">
+        <button role="tab" aria-selected={tab === 'basic'} className={tab === 'basic' ? 'on' : ''} onClick={() => setTab('basic')}>
+          기본 · 소재
+        </button>
+        <button role="tab" aria-selected={tab === 'detail'} className={tab === 'detail' ? 'on' : ''} onClick={() => setTab('detail')}>
+          위치 · 세부
+        </button>
       </div>
 
-      <div className="insp-section">
-        <div className="insp-label">
-          <Layers size={13} /> 배치 방식 & 높이 (적층·벽걸이·천장)
-        </div>
-        <div className="seg-grid-4">
-          {(
-            [
-              ['floor', '바닥'],
-              ['surface', '위 거치'],
-              ['wall', '벽걸이'],
-              ['ceiling', '천장'],
-            ] as [Mount, string][]
-          ).map(([m, label]) => (
-            <button key={m} className={'seg-btn' + (mountNow === m ? ' on' : '')} disabled={it.locked} onClick={() => setMount(m)}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="elev-control">
-          <div className="insp-label-row">
-            <span className="mini-cap">바닥에서 띄우기</span>
-            <b className="mono">{Math.round(it.y)} cm</b>
-          </div>
-          <input type="range" min={0} max={Math.max(0, Math.round(project.plan.ceiling - dims.h))} step={1} disabled={it.locked} value={Math.round(it.y)} onChange={(e) => up((x) => (x.y = +e.target.value), false)} />
-          <div className="quick-elev-row">
-            {(
-              [
-                [0, '바닥 0'],
-                [74, '책상 위 74'],
-                [85, '주방 상판 85'],
-                [120, '벽 120'],
-              ] as [number, string][]
-            ).map(([h, l]) => (
-              <button key={h} className="btn-xs" disabled={it.locked} onClick={() => up((x) => (x.y = h))}>
-                {l}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="insp-section">
-        <div className="insp-label-row">
-          <span className="insp-label">회전 & 위치</span>
-          <b className="mono">{Math.round(it.rot)}°</b>
-        </div>
-        <div className="rot-btn-row">
-          <button className="btn-sm" disabled={it.locked} onClick={() => up((x) => (x.rot = normDeg(x.rot + 90)))}>
-            <RotateCcw size={12} /> 90°
-          </button>
-          <button className="btn-sm" disabled={it.locked} onClick={() => up((x) => (x.rot = normDeg(x.rot + 15)))}>
-            −15°
-          </button>
-          <button className="btn-sm" disabled={it.locked} onClick={() => up((x) => (x.rot = normDeg(x.rot - 15)))}>
-            +15°
-          </button>
-          <button className="btn-sm" disabled={it.locked} onClick={() => up((x) => (x.rot = normDeg(x.rot - 90)))}>
-            <RotateCw size={12} /> 90°
-          </button>
-        </div>
-        <div className="dim-grid-3" style={{ marginTop: 8 }}>
-          <label>
-            <span>X 가로</span>
-            <Num value={it.x} onChange={(val) => up((x) => (x.x = val))} />
-          </label>
-          <label>
-            <span>Z 세로</span>
-            <Num value={it.z} onChange={(val) => up((x) => (x.z = val))} />
-          </label>
-          <label>
-            <span>회전 °</span>
-            <Num value={it.rot} step={15} onChange={(val) => up((x) => (x.rot = normDeg(val)))} />
-          </label>
-        </div>
-        <div className="quick-elev-row">
-          <button className="btn-xs" disabled={it.locked} onClick={toWall}>
-            벽에 붙이기
-          </button>
-          <button className={'btn-xs' + (it.mirror ? ' on' : '')} onClick={() => up((x) => (x.mirror = !x.mirror))}>
-            <FlipHorizontal size={11} /> 좌우 반전
-          </button>
-        </div>
-      </div>
-
-      {def && Object.keys(def.slots).length > 0 && (
-        <div className="insp-section">
-          <div className="insp-label-row">
-            <span className="insp-label">
-              <Palette size={13} /> 소재 & 컬러
-            </span>
-            {it.mats && (
-              <button className="btn-xs" onClick={() => up((x) => (x.mats = undefined))}>
-                기본값
-              </button>
+      {tab === 'basic' ? (
+        <>
+          <div className={'gap-readout' + (showCeil ? ' cols-5' : ' cols-4')}>
+            <div>
+              <span>좌</span>
+              <b className="mono">{fmtGap('left')}</b>
+            </div>
+            <div>
+              <span>우</span>
+              <b className="mono">{fmtGap('right')}</b>
+            </div>
+            <div>
+              <span>앞</span>
+              <b className="mono">{fmtGap('front')}</b>
+            </div>
+            <div>
+              <span>뒤</span>
+              <b className="mono">{fmtGap('back')}</b>
+            </div>
+            {showCeil && (
+              <div>
+                <span>천장</span>
+                <b className="mono">{Math.round(ceilGap)}</b>
+              </div>
             )}
           </div>
-          {prod.variants && (
-            <div className="mat-chips">
-              {prod.variants.map((vv) => (
-                <button key={vv.name} className={'chip sm' + (JSON.stringify(it.mats ?? prod.mats) === JSON.stringify(vv.mats) ? ' active' : '')} onClick={() => up((x) => (x.mats = { ...vv.mats }))}>
-                  <span className="color-dot" style={{ background: Object.values(vv.mats)[0]?.color, display: 'inline-block', marginRight: 4, verticalAlign: -1 }} />
-                  {vv.name}
+
+          <div className="insp-section" style={{ borderTop: 0, marginTop: 0, paddingTop: 0 }}>
+            <div className="insp-label-row">
+              <span className="insp-label">치수 (cm)</span>
+              {it.dims && (
+                <button className="btn-xs" onClick={() => up((x) => (x.dims = undefined))}>
+                  원래 크기
                 </button>
+              )}
+            </div>
+            <div className="dim-grid-3">
+              {(
+                [
+                  ['w', 'W 가로'],
+                  ['d', 'D 깊이'],
+                  ['h', 'H 높이'],
+                ] as const
+              ).map(([k, l]) => (
+                <label key={k}>
+                  <span>{l}</span>
+                  <Num value={dims[k]} min={0.5} onChange={(val) => up((x) => (x.dims = { ...dims, [k]: val }))} />
+                </label>
               ))}
             </div>
-          )}
-          <div className="grid2">
-            {Object.entries(def.slots).map(([k, s]) => (
-              <MatInput key={k} label={s.label} value={mats[k]} palette={moodColors.slice(0, 10)} onChange={(m) => up((x) => (x.mats = { ...(x.mats ?? {}), [k]: m }))} />
-            ))}
+            {resized && <div className="callout warn">실제 판매 제품 치수와 다르게 조정됨</div>}
           </div>
-        </div>
-      )}
 
-      {prod.model === 'frame' && (
-        <div className="insp-section">
-          <div className="insp-label">액자 이미지 (무드보드에서)</div>
-          <select className="inp" value={it.imageRef ?? ''} onChange={(e) => up((x) => (x.imageRef = e.target.value || undefined))}>
-            <option value="">(색만 표시)</option>
-            {project.moodboard
-              .filter((r) => r.kind === 'image')
-              .map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.title || '이미지'}
-                </option>
-              ))}
-          </select>
-        </div>
-      )}
-
-      {def && def.params.length > 0 && (
-        <details className="insp-section more" open={prod.custom}>
-          <summary>
-            <SlidersHorizontal size={13} /> 형태 세부 (실제 제품에 맞추기)
-          </summary>
-          <div className="grid2">
-            {def.params.map((pd) => (
-              <ParamInput key={pd.key} def={pd} value={params[pd.key]} onChange={(val) => up((x) => (x.params = { ...(x.params ?? {}), [pd.key]: val }))} />
-            ))}
-          </div>
-          {it.params && (
-            <button className="btn-xs" onClick={() => up((x) => (x.params = undefined))}>
-              형태 초기화
-            </button>
-          )}
-        </details>
-      )}
-
-      {!it.locked && (
-        <details className="insp-section more">
-          <summary>
-            <Wrench size={13} /> 배치 도구 (나란히 복제{isTable ? ' · 의자 둘러놓기' : ''})
-          </summary>
-          <div className="tool-card">
-            <div className="mini-cap">나란히 복제 — 책장·수납 연결, 의자 줄 세우기</div>
-            <div className="row" style={{ margin: 0 }}>
-              <div style={{ width: 64 }}>
-                <Num value={arr.n} min={2} max={20} unit="개" onChange={(n) => setArr({ ...arr, n })} />
-              </div>
-              <div style={{ width: 74 }}>
-                <Num value={arr.gap} unit="cm" onChange={(gap) => setArr({ ...arr, gap })} title="간격" />
-              </div>
-              <select className="inp" style={{ width: 'auto' }} value={arr.dir} onChange={(e) => setArr({ ...arr, dir: e.target.value as typeof arr.dir })}>
-                <option value="right">오른쪽</option>
-                <option value="left">왼쪽</option>
-                <option value="front">앞</option>
-                <option value="back">뒤</option>
-              </select>
-              <button className="btn-xs primary" onClick={arrayDup}>
-                복제
-              </button>
-            </div>
-            {isTable && (
-              <>
-                <div className="mini-cap" style={{ marginTop: 10 }}>
-                  테이블 둘레에 의자 놓기
-                </div>
-                <div className="row" style={{ margin: 0 }}>
-                  <select className="inp" style={{ flex: 1, minWidth: 110 }} value={ring.chair} onChange={(e) => setRing({ ...ring, chair: e.target.value })}>
-                    {all
-                      .filter((p) => p.category === 'chair' && p.model !== 'lounge' && p.model !== 'bench')
-                      .map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                  </select>
-                  <div style={{ width: 60 }}>
-                    <Num value={ring.n} min={1} max={12} unit="개" onChange={(n) => setRing({ ...ring, n })} />
-                  </div>
-                  <button className="btn-xs primary" onClick={chairsAround}>
-                    놓기
+          {def && Object.keys(def.slots).length > 0 && (
+            <div className="insp-section">
+              <div className="insp-label-row">
+                <span className="insp-label">소재 · 컬러</span>
+                {it.mats && (
+                  <button className="btn-xs" onClick={() => up((x) => (x.mats = undefined))}>
+                    초기화
                   </button>
+                )}
+              </div>
+              {prod.variants && (
+                <div className="mat-chips">
+                  {prod.variants.map((vv) => (
+                    <button
+                      key={vv.name}
+                      className={'chip sm' + (JSON.stringify(it.mats ?? prod.mats) === JSON.stringify(vv.mats) ? ' active' : '')}
+                      onClick={() => up((x) => (x.mats = { ...vv.mats }))}
+                    >
+                      <span className="color-dot" style={{ background: Object.values(vv.mats)[0]?.color }} />
+                      {vv.name}
+                    </button>
+                  ))}
                 </div>
-              </>
-            )}
+              )}
+              <div className="grid2">
+                {Object.entries(def.slots).map(([k, s]) => (
+                  <MatInput key={k} label={s.label} value={mats[k]} palette={moodColors.slice(0, 10)} onChange={(m) => up((x) => (x.mats = { ...(x.mats ?? {}), [k]: m }))} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {prod.model === 'frame' && (
+            <div className="insp-section">
+              <div className="insp-label">액자 이미지</div>
+              <select className="inp" value={it.imageRef ?? ''} onChange={(e) => up((x) => (x.imageRef = e.target.value || undefined))}>
+                <option value="">(색만 표시)</option>
+                {project.moodboard
+                  .filter((r) => r.kind === 'image')
+                  .map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.title || '이미지'}
+                    </option>
+                  ))}
+              </select>
+            </div>
+          )}
+
+          {(alts.length > 0 || ranked.length > 0) && !prod.builtin && (
+            <div className="insp-section">
+              <div className="insp-label-row">
+                <span className="insp-label">이 자리 후보 교체</span>
+                <span className="mini-cap" style={{ margin: 0 }}>뒷면 유지</span>
+              </div>
+              {alts.length > 0 && (
+                <div className="mat-chips">
+                  {alts.map((a) => (
+                    <button key={a.id} className="chip sm" onClick={() => doSwap(a)} title={`${a.dims.w}×${a.dims.d}×${a.dims.h}`}>
+                      {a.name.length > 14 ? a.name.slice(0, 14) + '…' : a.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="search-box" style={{ height: 28, marginBottom: 6 }}>
+                <input placeholder={`${catLabel(prod.category)} ${sameCat.length}개 검색`} value={swapQ} onChange={(e) => setSwapQ(e.target.value)} />
+              </div>
+              <div className="swap-list-hairline">
+                {ranked.slice(0, 24).map((cand) => (
+                  <button key={cand.id} className="swap-row" onClick={() => doSwap(cand)}>
+                    <span className="color-dot" style={{ background: Object.values(resolveMats(cand))[0]?.color }} />
+                    <div className="swap-card-info">
+                      <div className="swap-name">{cand.name}</div>
+                      <div className="swap-sub mono">
+                        {cand.brand} · {cand.dims.w}×{cand.dims.d}
+                        {cand.price ? ` · ${fmtWon(cand.price)}` : ''}
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="insp-section" style={{ borderTop: 0, marginTop: 0, paddingTop: 0 }}>
+            <div className="insp-label">배치 기준 · 띄우기</div>
+            <div className="seg-grid-4">
+              {(
+                [
+                  ['floor', '바닥'],
+                  ['surface', '위'],
+                  ['wall', '벽'],
+                  ['ceiling', '천장'],
+                ] as [Mount, string][]
+              ).map(([m, label]) => (
+                <button key={m} className={'seg-btn' + (mountNow === m ? ' on' : '')} disabled={it.locked} onClick={() => setMount(m)}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="elev-control">
+              <div className="insp-label-row">
+                <span className="mini-cap" style={{ margin: 0 }}>바닥에서 높이</span>
+                <b className="mono" style={{ fontSize: 12 }}>{Math.round(it.y)} cm</b>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={Math.max(0, Math.round(project.plan.ceiling - dims.h))}
+                step={1}
+                disabled={it.locked}
+                value={Math.round(it.y)}
+                onChange={(e) => up((x) => (x.y = +e.target.value), false)}
+                style={{ marginTop: 4 }}
+              />
+              <div className="quick-elev-row">
+                {(
+                  [
+                    [0, '바닥 0'],
+                    [74, '책상 74'],
+                    [85, '상판 85'],
+                    [120, '벽 120'],
+                  ] as [number, string][]
+                ).map(([h, l]) => (
+                  <button key={h} className="btn-xs" disabled={it.locked} onClick={() => up((x) => (x.y = h))}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
-        </details>
+
+          <div className="insp-section">
+            <div className="insp-label-row">
+              <span className="insp-label">회전 · 좌표</span>
+              <b className="mono" style={{ fontSize: 12 }}>{Math.round(it.rot)}°</b>
+            </div>
+            <div className="rot-btn-row">
+              <button className="btn-sm" disabled={it.locked} onClick={() => up((x) => (x.rot = normDeg(x.rot + 90)))}>
+                <RotateCcw size={11} /> 90°
+              </button>
+              <button className="btn-sm" disabled={it.locked} onClick={() => up((x) => (x.rot = normDeg(x.rot + 15)))}>
+                −15°
+              </button>
+              <button className="btn-sm" disabled={it.locked} onClick={() => up((x) => (x.rot = normDeg(x.rot - 15)))}>
+                +15°
+              </button>
+              <button className="btn-sm" disabled={it.locked} onClick={() => up((x) => (x.rot = normDeg(x.rot - 90)))}>
+                <RotateCw size={11} /> 90°
+              </button>
+            </div>
+            <div className="dim-grid-3" style={{ marginTop: 8 }}>
+              <label>
+                <span>X</span>
+                <Num value={it.x} onChange={(val) => up((x) => (x.x = val))} />
+              </label>
+              <label>
+                <span>Z</span>
+                <Num value={it.z} onChange={(val) => up((x) => (x.z = val))} />
+              </label>
+              <label>
+                <span>회전 °</span>
+                <Num value={it.rot} step={15} onChange={(val) => up((x) => (x.rot = normDeg(val)))} />
+              </label>
+            </div>
+            <div className="seg-grid-2" style={{ marginTop: 8 }}>
+              <button className="btn-xs" disabled={it.locked} onClick={toWall}>
+                벽에 밀착
+              </button>
+              <button className={'btn-xs' + (it.mirror ? ' on' : '')} disabled={it.locked} onClick={() => up((x) => (x.mirror = !x.mirror))}>
+                <FlipHorizontal size={11} /> 좌우 반전
+              </button>
+            </div>
+          </div>
+
+          {def && def.params.length > 0 && (
+            <div className="insp-section">
+              <div className="insp-label-row">
+                <span className="insp-label">형태 세부</span>
+                {it.params && (
+                  <button className="btn-xs" onClick={() => up((x) => (x.params = undefined))}>
+                    초기화
+                  </button>
+                )}
+              </div>
+              <div className="grid2">
+                {def.params.map((pd) => (
+                  <ParamInput key={pd.key} def={pd} value={params[pd.key]} onChange={(val) => up((x) => (x.params = { ...(x.params ?? {}), [pd.key]: val }))} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!it.locked && (
+            <div className="insp-section">
+              <div className="insp-label">배치 도구</div>
+              <div className="mini-cap">나란히 복제</div>
+              <div className="row" style={{ margin: '4px 0 0' }}>
+                <div style={{ width: 58 }}>
+                  <Num value={arr.n} min={2} max={20} unit="개" onChange={(n) => setArr({ ...arr, n })} />
+                </div>
+                <div style={{ width: 68 }}>
+                  <Num value={arr.gap} unit="cm" onChange={(gap) => setArr({ ...arr, gap })} title="간격" />
+                </div>
+                <select className="inp" style={{ width: 'auto', flex: 1 }} value={arr.dir} onChange={(e) => setArr({ ...arr, dir: e.target.value as typeof arr.dir })}>
+                  <option value="right">오른쪽</option>
+                  <option value="left">왼쪽</option>
+                  <option value="front">앞</option>
+                  <option value="back">뒤</option>
+                </select>
+                <button className="btn-xs primary" onClick={arrayDup}>
+                  실행
+                </button>
+              </div>
+              {isTable && (
+                <>
+                  <div className="mini-cap" style={{ marginTop: 10 }}>
+                    의자 둘러놓기
+                  </div>
+                  <div className="row" style={{ margin: '4px 0 0' }}>
+                    <select className="inp" style={{ flex: 1, minWidth: 100 }} value={ring.chair} onChange={(e) => setRing({ ...ring, chair: e.target.value })}>
+                      {all
+                        .filter((p) => p.category === 'chair' && p.model !== 'lounge' && p.model !== 'bench')
+                        .map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                    </select>
+                    <div style={{ width: 54 }}>
+                      <Num value={ring.n} min={1} max={12} unit="개" onChange={(n) => setRing({ ...ring, n })} />
+                    </div>
+                    <button className="btn-xs primary" onClick={chairsAround}>
+                      놓기
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+        </>
       )}
 
-      <div className="insp-footer-actions">
-        <button className="btn-secondary" onClick={duplicateSelected}>
-          <Copy size={13} /> 복제
+      {/* Slim single-row utility footer (mirrors canvas selection bar for touch/mobile parity) */}
+      <div className="insp-slim-foot">
+        <button className="btn-link-icon" onClick={() => testWithHuman(it, prod)} title="사람 아바타로 확인" aria-label="사람 체크">
+          <UserCheck size={14} />
         </button>
-        <button className="btn-secondary" onClick={() => up((x) => (x.locked = !x.locked))}>
-          {it.locked ? <Unlock size={13} /> : <Lock size={13} />} {it.locked ? '고정 풀기' : '고정'}
+        <button className="btn-link-icon" onClick={duplicateSelected} title="복제 (Cmd+D)" aria-label="복제">
+          <Copy size={14} />
         </button>
-        <button className="btn-secondary" onClick={() => up((x) => (x.hidden = true))}>
-          <EyeOff size={13} /> 숨기기
+        <button className="btn-link-icon" onClick={() => up((x) => (x.locked = !x.locked))} title={it.locked ? '고정 해제' : '고정'} aria-label="고정 전환">
+          {it.locked ? <Unlock size={14} /> : <Lock size={14} />}
         </button>
-        <button className="btn-danger" onClick={removeSelected} disabled={it.locked}>
-          <Trash2 size={13} /> 삭제
+        <button className="btn-link-icon" onClick={() => up((x) => (x.hidden = true))} title="숨기기 (H)" aria-label="숨기기">
+          <EyeOff size={14} />
+        </button>
+        <button className="btn-link-icon danger" onClick={removeSelected} disabled={it.locked} title="삭제 (Delete)" aria-label="삭제">
+          <Trash2 size={14} />
         </button>
       </div>
-      <p className="mini-note">끌어서 이동 · 파란 고리로 회전 · 화살표 1cm(Shift 10cm) · R 90° · Q/E 15° · PgUp/PgDn 높이 · Delete 삭제</p>
     </div>
   );
 }
 
-// ------------------------------------------------------------------ multi
+// ------------------------------------------------------------------ multi selection
 function MultiInspector({ ids }: { ids: string[] }) {
   const project = useStore((s) => s.project)!;
   const v = activeVersion(project)!;
@@ -828,40 +796,30 @@ function MultiInspector({ ids }: { ids: string[] }) {
   };
   const grouped = res.length > 0 && res.every((r) => r.it.groupId && r.it.groupId === res[0].it.groupId);
   return (
-    <div>
+    <div className="insp-stack">
       <div className="insp-header">
-        <h4>{ids.length}개 선택</h4>
-        <p className="insp-sub">합계 {fmtWon(total)} · Shift+클릭으로 추가/제외</p>
+        <div className="insp-eyebrow">다중 선택</div>
+        <h4 className="mono">
+          {ids.length}개 · {fmtWon(total)}
+        </h4>
       </div>
       <div className="insp-section">
-        <div className="insp-label">정렬</div>
+        <div className="insp-label">정렬 · 분배</div>
         <div className="seg-grid-3">
-          <button className="seg-btn" onClick={() => align('left')}>
-            왼쪽
-          </button>
-          <button className="seg-btn" onClick={() => align('right')}>
-            오른쪽
-          </button>
-          <button className="seg-btn" onClick={() => align('top')}>
-            위
-          </button>
-          <button className="seg-btn" onClick={() => align('bottom')}>
-            아래
-          </button>
+          <button className="seg-btn" onClick={() => align('left')}>왼쪽</button>
+          <button className="seg-btn" onClick={() => align('right')}>오른쪽</button>
+          <button className="seg-btn" onClick={() => align('top')}>위</button>
+          <button className="seg-btn" onClick={() => align('bottom')}>아래</button>
           <button className="seg-btn" onClick={() => align('cx')}>
-            <AlignCenterVertical size={11} /> 가로 중심
+            <AlignCenterVertical size={11} /> 가로
           </button>
           <button className="seg-btn" onClick={() => align('cz')}>
-            <AlignCenterHorizontal size={11} /> 세로 중심
+            <AlignCenterHorizontal size={11} /> 세로
           </button>
         </div>
         <div className="seg-grid-2" style={{ marginTop: 6 }}>
-          <button className="seg-btn" onClick={() => distribute('x')}>
-            가로 균등 분배
-          </button>
-          <button className="seg-btn" onClick={() => distribute('z')}>
-            세로 균등 분배
-          </button>
+          <button className="seg-btn" onClick={() => distribute('x')}>가로 균등</button>
+          <button className="seg-btn" onClick={() => distribute('z')}>세로 균등</button>
         </div>
       </div>
       <div className="insp-footer-actions">
@@ -882,7 +840,7 @@ function MultiInspector({ ids }: { ids: string[] }) {
   );
 }
 
-// ------------------------------------------------------------------ person
+// ------------------------------------------------------------------ person avatar
 const POSES: { v: Pose; l: string }[] = [
   { v: 'stand', l: '서기' },
   { v: 'walk', l: '걷기' },
@@ -899,18 +857,22 @@ function PersonInspector({ h }: { h: PlacedPerson }) {
   const a = anthro(prof.height, prof.shoulder);
   const up = (fn: (x: PlacedPerson) => void) => updateItems([h.id], fn as unknown as (x: PlacedItem) => void);
   return (
-    <div>
+    <div className="insp-stack">
       <div className="insp-header">
+        <div className="insp-eyebrow">사람 아바타</div>
         <h4>
-          사람 아바타 — {prof.name} {prof.height}cm
+          {prof.name} · <span className="mono">{prof.height}cm</span>
         </h4>
-        <p className="insp-sub">끌어서 소파·의자 위에 놓으면 앉은 높이에, 침대 위에 놓으면 누운 자세로 맞춰져요.</p>
       </div>
       <div className="insp-section">
         <div className="insp-label">자세</div>
         <div className="seg-grid-5">
           {POSES.map((p) => (
-            <button key={p.v} className={'seg-btn' + (h.pose === p.v ? ' on' : '')} onClick={() => up((x) => Object.assign(x, { pose: p.v, y: p.v === 'sit' ? x.y || 45 : p.v === 'lie' ? x.y || 42 : 0 }))}>
+            <button
+              key={p.v}
+              className={'seg-btn' + (h.pose === p.v ? ' on' : '')}
+              onClick={() => up((x) => Object.assign(x, { pose: p.v, y: p.v === 'sit' ? x.y || 45 : p.v === 'lie' ? x.y || 42 : 0 }))}
+            >
               {p.l}
             </button>
           ))}
@@ -927,7 +889,7 @@ function PersonInspector({ h }: { h: PlacedPerson }) {
             </label>
           )}
           <label>
-            <span>누구</span>
+            <span>인물</span>
             <select className="inp" value={h.profileId} onChange={(e) => up((x) => (x.profileId = e.target.value))}>
               {project.profiles.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -941,19 +903,19 @@ function PersonInspector({ h }: { h: PlacedPerson }) {
       <div className="anthro-grid">
         <div>
           <span>눈높이</span>
-          <b>{Math.round(h.pose === 'sit' ? (h.y || 45) + a.sitEyeH : a.eyeH)}cm</b>
+          <b className="mono">{Math.round(h.pose === 'sit' ? (h.y || 45) + a.sitEyeH : a.eyeH)}cm</b>
         </div>
         <div>
           <span>어깨폭</span>
-          <b>{Math.round(a.shoulderW)}cm</b>
+          <b className="mono">{Math.round(a.shoulderW)}cm</b>
         </div>
         <div>
-          <span>손 닿는 높이</span>
-          <b>{Math.round(a.reachUp)}cm</b>
+          <span>손 높이</span>
+          <b className="mono">{Math.round(a.reachUp)}cm</b>
         </div>
       </div>
-      <div className="insp-footer-actions">
-        <button className="btn-danger" onClick={removeSelected}>
+      <div className="insp-section">
+        <button className="btn-danger full-width" onClick={removeSelected}>
           <Trash2 size={13} /> 아바타 삭제
         </button>
       </div>
