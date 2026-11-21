@@ -36,11 +36,13 @@ const MODEL_FOR_CAT: Record<string, string> = {
 };
 
 function Preview({ p, height }: { p: Product; height: number }) {
+  const theme = useStore((s) => s.theme);
+  const dark = theme === 'dark';
   const span = Math.max(p.dims.w, p.dims.d, p.dims.h, 120) / 100;
   const person = useMemo(() => buildPerson(height, 'stand', '#e8a17a'), [height]);
   return (
     <Canvas camera={{ position: [span * 1.2, span * 0.9, span * 1.6], fov: 40 }} shadows>
-      <color attach="background" args={['#ece8e1']} />
+      <color attach="background" args={[dark ? '#1f2126' : '#ece8e0']} />
       <hemisphereLight args={['#ffffff', '#b9a98f', 0.9]} />
       <directionalLight position={[3, 5, 4]} intensity={1.4} castShadow />
       <group scale={0.01}>
@@ -48,9 +50,9 @@ function Preview({ p, height }: { p: Product; height: number }) {
         <primitive object={person} position={[p.dims.w / 2 + 35, 0, 0]} />
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[1000, 1000]} />
-          <meshStandardMaterial color="#e2ddd5" />
+          <meshStandardMaterial color={dark ? '#262930' : '#e2ddd5'} />
         </mesh>
-        <gridHelper args={[1000, 20, '#c9c1b5', '#d8d1c7']} position={[0, 0.2, 0]} />
+        <gridHelper key={theme} args={[1000, 20, dark ? '#3e424c' : '#c9c1b5', dark ? '#2e323a' : '#d8d1c7']} position={[0, 0.2, 0]} />
       </group>
       <OrbitControls target={[0, (p.dims.h / 200) * 0.9, 0]} makeDefault />
     </Canvas>
@@ -212,8 +214,7 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
             </div>
             <p className="note" role="status">{loading ? '판매 페이지에서 상품 정보를 읽고 있어요…' : importNote || '제품명·브랜드·원화 가격·치수를 가능한 만큼 채워요.'}</p>
           </div>
-          <div className="callout info">판매 페이지의 <b>제품 크기(가로×깊이×높이)</b>를 그대로 넣으세요. 형태를 고르고 세부(좌면 높이, 팔걸이, 다리, 서랍 수 등)를 맞추면 실제 제품과 같은 비례의 3D가 만들어져요. 제조사 3D 파일(GLB/OBJ/FBX/STL)이 있으면 올려서 그대로 쓸 수도 있어요.</div>
-          <div className="grid2">
+          <div className="grid2" style={{ marginTop: 12 }}>
             <Field label="제품 이름 *">
               <input className="inp" value={p.name} onChange={(e) => setP({ ...p, name: e.target.value })} placeholder="예: 클레어 3인 패브릭 소파" />
             </Field>
