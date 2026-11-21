@@ -1,39 +1,52 @@
 import {
   Box,
   Camera,
-  Cloud,
-  CloudOff,
+  Check,
+  ChevronDown,
   Columns2,
+  Copy,
   Crosshair,
   Eye,
+  FlipHorizontal,
   Footprints,
   HelpCircle,
-  History,
   Layers,
   LayoutGrid,
+  Lock,
+  Minus,
   Moon,
   Palette,
+  PanelLeftClose,
+  PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Plus,
   Redo2,
+  RefreshCw,
+  RotateCw,
   Ruler,
-  Save,
   SlidersHorizontal,
   Sofa,
   Sun,
   Sunrise,
   Sunset,
+  Trash2,
   Undo2,
+  Unlock,
   User,
+  UserCheck,
+  X,
 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { PRODUCTS } from './catalog/products';
 import { anthro, ideals } from './lib/ergonomics';
-import { fmtWon, normDeg, polyArea, pyeong } from './lib/geometry';
+import { fmtWon, itemAxes, normDeg, polyArea } from './lib/geometry';
+import { resolveMats } from './models';
 import { requestCamera, useScene } from './scene/sceneState';
 import { Viewport } from './scene/Viewport';
 import { activeVersion, getProduct, syncText, useStore } from './store/store';
-import type { Product } from './types';
-import { mainAvatar, updateAvatar } from './ui/actions';
+import type { PlacedItem, Pose, Product } from './types';
+import { mainAvatar, testWithHuman, updateAvatar } from './ui/actions';
 import { CatalogPanel } from './ui/CatalogPanel';
 import { dataUrlToBlob, download, Modal } from './ui/common';
 import { useErgo } from './ui/ergo';
@@ -46,11 +59,18 @@ import { CompareModal, HumanPanel, LayoutListPanel, VersionsPanel } from './ui/S
 
 type LeftTab = 'catalog' | 'placed' | 'human' | 'versions';
 
-const TIMES: { id: string; hour: number; lamps: boolean }[] = [
-  { id: 'morning', hour: 8, lamps: false },
-  { id: 'noon', hour: 13, lamps: false },
-  { id: 'golden', hour: 17, lamps: false },
-  { id: 'night', hour: 21, lamps: true },
+const TIMES: { id: string; label: string; short: string; hour: number; lamps: boolean }[] = [
+  { id: 'morning', label: '아침 8시', short: '아침', hour: 8, lamps: false },
+  { id: 'noon', label: '한낮 13시', short: '낮', hour: 13, lamps: false },
+  { id: 'golden', label: '노을 17시', short: '노을', hour: 17, lamps: false },
+  { id: 'night', label: '밤 + 조명', short: '밤', hour: 21, lamps: true },
+];
+
+const WALL_MODES: { id: 'auto' | 'full' | 'low' | 'hidden'; label: string }[] = [
+  { id: 'auto', label: '자동 투시' },
+  { id: 'full', label: '전체 벽' },
+  { id: 'low', label: '낮은 벽' },
+  { id: 'hidden', label: '벽 숨김' },
 ];
 
 function useIsMobile() {
@@ -65,6 +85,24 @@ function useIsMobile() {
   return m;
 }
 
+function useOutsideClose(open: boolean, ref: RefObject<HTMLElement>, onClose: () => void) {
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    window.addEventListener('pointerdown', onDown);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('pointerdown', onDown);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open, ref, onClose]);
+}
+
 export default function App() {
   const ready = useStore((s) => s.ready);
   const gate = useStore((s) => s.gate);
@@ -73,7 +111,7 @@ export default function App() {
     void init();
   }, [init]);
   if (gate === 'login') return <LoginScreen />;
-  if (!ready) return <div style={{ padding: 40, color: '#8c857b' }}>불러오는 중…</div>;
+  if (!ready) return <div className="studio-loading">불러오는 중…</div>;
   return <Studio />;
 }
 
@@ -81,8 +119,12 @@ function Studio() {
   const project = useStore((s) => s.project)!;
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
+  const leftOpen = useStore((s) => s.leftOpen);
   const rightOpen = useStore((s) => s.rightOpen);
   const selection = useStore((s) => s.selection);
+  const placing = useStore((s) => s.placing);
+  const placingPerson = useStore((s) => s.placingPerson);
+  const measure = useStore((s) => s.measure);
   const toast = useStore((s) => s.toast);
   const isMobile = useIsMobile();
   const [leftTab, setLeftTab] = useState<LeftTab>('catalog');
@@ -93,6 +135,8 @@ function Studio() {
   const [help, setHelp] = useState(false);
   const [mtab, setMtab] = useState<'left' | 'right' | 'none'>('none');
   const [toastOn, setToastOn] = useState(false);
+  const v = activeVersion(project)!;
+  const furnCount = v.items.filter((i) => !i.locked).length;
 
   useEffect(() => {
     if (!toast) return;
@@ -102,6 +146,7 @@ function Studio() {
   }, [toast]);
   useEffect(() => {
     if (selection.length) {
+      setSplitMood(false);
       useStore.setState({ rightOpen: true });
       if (isMobile) setMtab('right');
     }
@@ -109,33 +154,60 @@ function Studio() {
   useKeys();
 
   const stage3d = view === '3d' || view === 'top' || view === 'walk';
+  const showSelectionBar =
+    (view === '3d' || view === 'top' || view === '2d') &&
+    selection.length > 0 &&
+    !placing &&
+    !placingPerson &&
+    !measure &&
+    !(isMobile && mtab !== 'none');
+
+  const toggleSplitMood = () => {
+    setSplitMood((prev) => {
+      const next = !prev;
+      if (next) useStore.setState({ rightOpen: true });
+      return next;
+    });
+  };
+
   return (
     <div className="studio-root">
-      <Header
-        leftTab={leftTab}
-        onVersions={() => {
-          setLeftTab('versions');
-          if (view === 'mood') setView('3d');
-          if (isMobile) setMtab('left');
-        }}
-        splitMood={splitMood}
-        onSplitMood={() => setSplitMood((x) => !x)}
-        onHelp={() => setHelp(true)}
-      />
-      <div className="studio-body">
+      <main className="center-stage">
+        <div style={{ position: 'absolute', inset: 0, display: stage3d ? 'block' : 'none' }}>
+          <Viewport />
+        </div>
+        {view === '2d' && <PlanEditor editing={editPlan} onToggleEdit={setEditPlan} />}
+        {view === 'mood' && <Moodboard />}
+
+        <Header
+          isMobile={isMobile}
+          onToggleLeft={() => {
+            if (isMobile) setMtab(mtab === 'left' ? 'none' : 'left');
+            else useStore.setState({ leftOpen: !leftOpen });
+          }}
+          onVersions={() => {
+            setLeftTab('versions');
+            if (view === 'mood') setView('3d');
+            if (isMobile) setMtab('left');
+            else useStore.setState({ leftOpen: true });
+          }}
+          splitMood={splitMood}
+          onSplitMood={toggleSplitMood}
+          onHelp={() => setHelp(true)}
+        />
+
         {view !== 'mood' && (
-          <aside className={'left-panel' + (isMobile && mtab !== 'left' ? ' m-hidden' : '')}>
+          <aside className={'left-panel' + (!leftOpen ? ' collapsed' : '') + (isMobile && mtab !== 'left' ? ' m-hidden' : '')}>
             <div className="left-tabs">
               {(
                 [
-                  ['catalog', <Sofa key="c" size={15} />, '가구 후보'],
-                  ['placed', <Layers key="p" size={15} />, '배치목록'],
-                  ['human', <User key="h" size={15} />, '사람·동선'],
-                  ['versions', <History key="v" size={15} />, '버전저장'],
-                ] as [LeftTab, JSX.Element, string][]
-              ).map(([id, ic, l]) => (
+                  ['catalog', '카탈로그'],
+                  ['placed', `배치 ${furnCount}`],
+                  ['human', '동선'],
+                  ['versions', '버전'],
+                ] as [LeftTab, string][]
+              ).map(([id, l]) => (
                 <button key={id} className={leftTab === id ? 'on' : ''} onClick={() => setLeftTab(id)}>
-                  {ic}
                   <span>{l}</span>
                 </button>
               ))}
@@ -149,41 +221,44 @@ function Studio() {
           </aside>
         )}
 
-        <main className="center-stage">
-          <div style={{ position: 'absolute', inset: 0, display: stage3d ? 'block' : 'none' }}>
-            <Viewport />
-          </div>
-          {(view === '3d' || view === 'top') && <CameraBar />}
-          {view === '3d' && <div className="stage-hint">가구 클릭→드래그 이동 · 파란 고리→회전 · 빈 곳 드래그→화면 회전 · 우클릭/Shift→화면 이동</div>}
-          {view === 'walk' && <PovHud />}
-          {view === '2d' && <PlanEditor editing={editPlan} onToggleEdit={setEditPlan} />}
-          {view === 'mood' && <Moodboard />}
-          <PlaceHint />
-          <HeatLegend />
-          {toastOn && toast && <div className="studio-toast">{toast.msg}</div>}
-        </main>
-
-        {view !== 'mood' && splitMood && (
-          <aside className={'split-mood-drawer' + (isMobile ? ' m-hidden' : '')}>
-            <Moodboard compact />
+        {view !== 'mood' && (
+          <aside className={'right-panel' + (!rightOpen ? ' collapsed' : '') + (isMobile && mtab !== 'right' ? ' m-hidden' : '')}>
+            {splitMood ? (
+              <div className="right-panel-inner">
+                <div className="drawer-subhead">
+                  <span>무드보드 레퍼런스</span>
+                  <button className="icon-xs" onClick={() => setSplitMood(false)} title="속성 패널로 돌아가기">
+                    <X size={14} />
+                  </button>
+                </div>
+                <div className="right-panel-body">
+                  <Moodboard compact />
+                </div>
+              </div>
+            ) : (
+              <Inspector
+                onEditPlan={() => {
+                  setView('2d');
+                  setEditPlan(true);
+                }}
+              />
+            )}
           </aside>
         )}
 
-        {view !== 'mood' && rightOpen && (
-          <aside className={'right-panel' + (isMobile && mtab !== 'right' ? ' m-hidden' : '')}>
-            <Inspector
-              onEditPlan={() => {
-                setView('2d');
-                setEditPlan(true);
-              }}
-            />
-          </aside>
-        )}
-      </div>
+        {(view === '3d' || view === 'top') && <ViewportHud />}
+        {showSelectionBar && <SelectionBar />}
+        {(view === '3d' || view === 'top') && <CameraBar />}
+        {view === 'walk' && <PovHud />}
+        <PlaceHint />
+        <HeatLegend />
+        {toastOn && toast && <div className={'studio-toast' + (showSelectionBar ? ' raised' : '')}>{toast.msg}</div>}
+      </main>
+
       {isMobile && view !== 'mood' && (
         <nav className="mobile-tabs">
           <button className={mtab === 'left' ? 'on' : ''} onClick={() => setMtab(mtab === 'left' ? 'none' : 'left')}>
-            <Sofa size={15} /> 가구·목록
+            <Sofa size={15} /> 카탈로그·목록
           </button>
           <button
             className={mtab === 'right' ? 'on' : ''}
@@ -208,103 +283,165 @@ function Studio() {
   );
 }
 
-// ------------------------------------------------------------------ header
-function Header({ onVersions, splitMood, onSplitMood, onHelp }: { leftTab: LeftTab; onVersions: () => void; splitMood: boolean; onSplitMood: () => void; onHelp: () => void }) {
+// ------------------------------------------------------------------ floating 3-zone header
+function Header({
+  isMobile,
+  onToggleLeft,
+  onVersions,
+  splitMood,
+  onSplitMood,
+  onHelp,
+}: {
+  isMobile: boolean;
+  onToggleLeft: () => void;
+  onVersions: () => void;
+  splitMood: boolean;
+  onSplitMood: () => void;
+  onHelp: () => void;
+}) {
   const project = useStore((s) => s.project)!;
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
+  const theme = useStore((s) => s.theme);
+  const toggleTheme = useStore((s) => s.toggleTheme);
+  const setActiveVersion = useStore((s) => s.setActiveVersion);
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
   const past = useStore((s) => s.past.length);
   const future = useStore((s) => s.future.length);
-  const show = useStore((s) => s.show);
-  const setShow = useStore((s) => s.setShow);
+  const leftOpen = useStore((s) => s.leftOpen);
   const rightOpen = useStore((s) => s.rightOpen);
   const sync = useStore((s) => s.sync);
   const saveState = useStore((s) => s.saveState);
   const st = syncText(sync);
-  const mutateVersion = useStore((s) => s.mutateVersion);
   const rep = useErgo();
   const v = activeVersion(project)!;
-  const prof = project.profiles.find((p) => p.id === project.activeProfileId) ?? project.profiles[0];
   const area = project.info?.area ?? project.plan.rooms.reduce((a, r) => a + polyArea(r.points), 0) / 10000;
-  const mark = project.name.match(/\d{3,4}/)?.[0] ?? '2nd';
-  const f = v.finishes;
-  const tIdx = Math.max(0, TIMES.findIndex((t) => Math.abs(t.hour - f.hour) < 1.5 && t.lamps === f.lampsOn));
-  const cur = TIMES[tIdx]?.id ?? 'noon';
-  const cycle = () => {
-    const n = TIMES[(tIdx + 1) % TIMES.length];
-    mutateVersion((vv) => Object.assign(vv.finishes, { hour: n.hour, lampsOn: n.lamps }), false);
-  };
-  const avatar = mainAvatar(project, v);
+  const [verOpen, setVerOpen] = useState(false);
+  const verRef = useRef<HTMLDivElement>(null);
+  useOutsideClose(verOpen, verRef, () => setVerOpen(false));
+  const sortedVersions = useMemo(() => [...project.versions].sort((a, b) => b.updatedAt - a.updatedAt), [project.versions]);
+
+  const syncLabel =
+    saveState === 'saving'
+      ? '저장 중'
+      : saveState === 'error'
+        ? sync === 'server'
+          ? '연결 대기 · 이 기기에 보관'
+          : '저장 실패'
+        : st.long;
+
   return (
     <header className="studio-header">
-      <div className="brand-block">
-        <div className="brand-mark">{mark}</div>
-        <div style={{ minWidth: 0 }}>
-          <div className="brand-title">{project.name} Studio</div>
-          <div className="brand-meta">
-            전용 {area.toFixed(2)}㎡ ({pyeong(area * 10000).toFixed(1)}평){project.info?.note ? ` · ${project.info.note}` : ''} · 사용성 <b>{rep?.score ?? '–'}점</b>
+      {/* Left Pill: Drawer toggle + Project / Version switcher + Meta */}
+      <div className="header-pill header-pill-left" ref={verRef}>
+        {view !== 'mood' && !isMobile && (
+          <>
+            <button className="icon-pill" onClick={onToggleLeft} title={leftOpen ? '좌측 패널 접기' : '좌측 패널 열기'} aria-label="좌측 패널 토글">
+              {leftOpen ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+            </button>
+            <span className="pill-sep" />
+          </>
+        )}
+        <span className="brand-title" title={project.name}>
+          {project.name}
+        </span>
+        <span className="crumb-slash">/</span>
+        <button className={'ver-trigger' + (verOpen ? ' on' : '')} onClick={() => setVerOpen((x) => !x)} title="버전 전환">
+          <span className="ver-trigger-name">{v.name}</span>
+          <ChevronDown size={12} />
+        </button>
+        <span className="header-meta mono" title={syncLabel}>
+          <span className={'sync-pip st-' + saveState} />
+          {area.toFixed(1)}㎡ · {fmtWon(rep?.total ?? 0)}
+        </span>
+
+        {verOpen && (
+          <div className="popover-menu ver-popover">
+            <div className="popover-head">배치 버전 ({sortedVersions.length})</div>
+            <div className="popover-list">
+              {sortedVersions.map((ver) => {
+                const active = ver.id === v.id;
+                return (
+                  <button
+                    key={ver.id}
+                    className={'popover-item' + (active ? ' on' : '')}
+                    onClick={() => {
+                      setActiveVersion(ver.id);
+                      setVerOpen(false);
+                    }}
+                  >
+                    <span className="popover-item-title">{ver.name}</span>
+                    {active && <Check size={13} />}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="popover-foot">
+              <button
+                className="popover-action"
+                onClick={() => {
+                  setVerOpen(false);
+                  onVersions();
+                }}
+              >
+                새 버전 저장 · 비교 관리…
+              </button>
+            </div>
           </div>
-        </div>
+        )}
       </div>
 
-      <nav className="mode-switcher">
+      {/* Center Pill: Mode Switcher */}
+      <nav className="mode-switcher" aria-label="화면 모드">
         <button className={view === '3d' || view === 'top' ? 'on' : ''} onClick={() => setView('3d')}>
-          <Box size={15} /> 3D 공간
+          <Box size={14} /> <span>3D</span>
         </button>
         <button className={view === '2d' ? 'on' : ''} onClick={() => setView('2d')}>
-          <LayoutGrid size={15} /> 2D 평면
+          <LayoutGrid size={14} /> <span>2D 평면</span>
         </button>
         <button className={view === 'walk' ? 'on' : ''} onClick={() => setView('walk')}>
-          <Footprints size={15} /> 1인칭 체험
+          <Footprints size={14} /> <span>1인칭</span>
         </button>
         <button className={view === 'mood' ? 'on' : ''} onClick={() => setView('mood')}>
-          <Palette size={15} /> 무드보드 ({project.moodboard.length})
+          <Palette size={14} /> <span>무드보드</span>
+          {project.moodboard.length > 0 && <em className="mode-count mono">{project.moodboard.length}</em>}
         </button>
       </nav>
 
-      <div className="header-actions">
-        <button className="icon-pill" disabled={!past} onClick={undo} title="되돌리기 (Cmd+Z)">
+      {/* Right Pill: Minimal Utility Cluster */}
+      <div className="header-pill header-pill-right">
+        <button className="icon-pill" disabled={!past} onClick={undo} title="되돌리기 (Cmd+Z)" aria-label="되돌리기">
           <Undo2 size={15} />
         </button>
-        <button className="icon-pill" disabled={!future} onClick={redo} title="다시 실행 (Cmd+Shift+Z)">
+        <button className="icon-pill" disabled={!future} onClick={redo} title="다시 실행 (Cmd+Shift+Z)" aria-label="다시 실행">
           <Redo2 size={15} />
         </button>
-        <button className="icon-pill hide-m" onClick={cycle} title="채광·시간대 전환 (아침/낮/노을/밤)" aria-label="채광·시간대 전환">
-          {cur === 'morning' && <Sunrise size={15} />}
-          {cur === 'noon' && <Sun size={15} />}
-          {cur === 'golden' && <Sunset size={15} />}
-          {cur === 'night' && <Moon size={15} />}
-        </button>
-        <button
-          className={'pill-toggle hide-m' + (show.people && avatar ? ' on' : '')}
-          onClick={() => (avatar ? setShow({ people: !show.people }) : updateAvatar({}))}
-          title="실제 사람 사이즈 아바타 표시"
-        >
-          <User size={14} /> {prof?.height}cm
+        <span className="pill-sep hide-m" />
+        <button className="icon-pill" onClick={toggleTheme} title={theme === 'dark' ? '라이트 모드로 전환' : '다크 모드로 전환'} aria-label="테마 전환">
+          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
         </button>
         {view !== 'mood' && (
-          <button className={'pill-toggle hide-m' + (splitMood ? ' on' : '')} onClick={onSplitMood} title="3D 화면 옆에 무드보드 레퍼런스 함께 띄우기">
-            <Columns2 size={14} /> 무드 함께보기
+          <button
+            className={'icon-pill hide-m' + (splitMood && rightOpen ? ' on' : '')}
+            onClick={onSplitMood}
+            title="우측 패널에 무드보드 레퍼런스 띄우기"
+            aria-label="무드보드 함께보기"
+          >
+            <Columns2 size={15} />
           </button>
         )}
-        <div className="budget-chip mono" title="현재 배치된 가구 예상 합계">
-          {fmtWon(rep?.total ?? 0)}
-        </div>
-        <span className="sync-dot hide-m" title={st.long}>
-          {st.shared ? <Cloud size={13} /> : <CloudOff size={13} />}
-          {saveState === 'saving' ? '저장 중' : saveState === 'error' ? (sync === 'server' ? '연결 대기 · 이 기기에 보관' : '저장 실패') : '저장됨'}
-        </span>
-        <button className="btn-save-top" onClick={onVersions}>
-          <Save size={14} /> 버전 ({project.versions.length})
-        </button>
         {view !== 'mood' && (
-          <button className="icon-pill hide-m" onClick={() => useStore.setState({ rightOpen: !rightOpen })} title="오른쪽 속성 패널 열기/닫기">
+          <button
+            className="icon-pill hide-m"
+            onClick={() => useStore.setState({ rightOpen: !rightOpen })}
+            title={rightOpen ? '우측 속성 패널 접기' : '우측 속성 패널 열기'}
+            aria-label="우측 패널 토글"
+          >
             {rightOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
           </button>
         )}
-        <button className="icon-pill hide-m" onClick={onHelp} title="도움말">
+        <button className="icon-pill hide-m" onClick={onHelp} title="단축키 · 도움말" aria-label="도움말">
           <HelpCircle size={15} />
         </button>
       </div>
@@ -312,38 +449,373 @@ function Header({ onVersions, splitMood, onSplitMood, onHelp }: { leftTab: LeftT
   );
 }
 
-// ------------------------------------------------------------------ stage overlays
+// ------------------------------------------------------------------ persistent bottom-left viewport HUD
+function ViewportHud() {
+  const project = useStore((s) => s.project)!;
+  const show = useStore((s) => s.show);
+  const setShow = useStore((s) => s.setShow);
+  const snap = useStore((s) => s.snap);
+  const setSnap = useStore((s) => s.setSnap);
+  const mutateVersion = useStore((s) => s.mutateVersion);
+  const v = activeVersion(project)!;
+  const f = v.finishes;
+  const prof = project.profiles.find((p) => p.id === project.activeProfileId) ?? project.profiles[0];
+  const avatar = mainAvatar(project, v);
+  const [pop, setPop] = useState<'light' | 'walls' | 'layers' | null>(null);
+  const hudRef = useRef<HTMLDivElement>(null);
+  useOutsideClose(pop !== null, hudRef, () => setPop(null));
+
+  const tIdx = Math.max(0, TIMES.findIndex((t) => Math.abs(t.hour - f.hour) < 1.5 && t.lamps === f.lampsOn));
+  const curTime = TIMES[tIdx] ?? TIMES[1];
+  const curWall = WALL_MODES.find((w) => w.id === show.walls) ?? WALL_MODES[0];
+  const extraLayersOn = show.heatmap || show.clearance || show.grid;
+
+  return (
+    <div className="viewport-hud" ref={hudRef}>
+      <button className={'hud-btn' + (pop === 'light' ? ' on' : '')} onClick={() => setPop(pop === 'light' ? null : 'light')} title="채광 및 조명 설정">
+        {curTime.id === 'morning' && <Sunrise size={14} />}
+        {curTime.id === 'noon' && <Sun size={14} />}
+        {curTime.id === 'golden' && <Sunset size={14} />}
+        {curTime.id === 'night' && <Moon size={14} />}
+        <span>{curTime.short}</span>
+      </button>
+      <span className="pill-sep" />
+      <button className={'hud-btn' + (pop === 'walls' ? ' on' : '')} onClick={() => setPop(pop === 'walls' ? null : 'walls')} title="벽 표시 모드">
+        <span>{curWall.label}</span>
+      </button>
+      <span className="pill-sep" />
+      <button className={'hud-btn' + (pop === 'layers' || extraLayersOn ? ' accent' : '')} onClick={() => setPop(pop === 'layers' ? null : 'layers')} title="표시 레이어 및 스냅">
+        <Layers size={14} />
+        <span>레이어</span>
+      </button>
+      <span className="pill-sep" />
+      <button
+        className={'hud-btn' + (show.people && avatar ? ' accent' : '')}
+        onClick={() => (avatar ? setShow({ people: !show.people }) : updateAvatar({}))}
+        title="실제 사람 크기 아바타 표시"
+      >
+        <User size={14} />
+        <span className="mono">{prof?.height}cm</span>
+      </button>
+
+      {pop === 'light' && (
+        <div className="hud-popover">
+          <div className="popover-head">채광 · 조명</div>
+          <div className="seg-grid-4" style={{ marginBottom: 10 }}>
+            {TIMES.map((t) => (
+              <button
+                key={t.id}
+                className={'seg-btn' + (curTime.id === t.id ? ' on' : '')}
+                onClick={() => mutateVersion((vv) => Object.assign(vv.finishes, { hour: t.hour, lampsOn: t.lamps }), false)}
+              >
+                {t.short}
+              </button>
+            ))}
+          </div>
+          <div className="insp-label-row">
+            <span className="mini-cap" style={{ margin: 0 }}>시간대</span>
+            <b className="mono" style={{ fontSize: 12 }}>{Math.floor(f.hour)}:{f.hour % 1 >= 0.5 ? '30' : '00'}</b>
+          </div>
+          <input
+            type="range"
+            min={5}
+            max={23}
+            step={0.5}
+            value={f.hour}
+            onChange={(e) => mutateVersion((vv) => (vv.finishes.hour = +e.target.value), false)}
+            style={{ width: '100%', margin: '6px 0 10px' }}
+          />
+          <div className="seg-grid-2">
+            <button className={'toggle-pill' + (f.lampsOn ? ' on' : '')} onClick={() => mutateVersion((vv) => (vv.finishes.lampsOn = !vv.finishes.lampsOn), false)}>
+              <span>스탠드·펜던트</span>
+              <b>{f.lampsOn ? '켜짐' : '꺼짐'}</b>
+            </button>
+            <button className={'toggle-pill' + (f.ceilingLights ? ' on' : '')} onClick={() => mutateVersion((vv) => (vv.finishes.ceilingLights = !vv.finishes.ceilingLights), false)}>
+              <span>천장등</span>
+              <b>{f.ceilingLights ? '켜짐' : '꺼짐'}</b>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {pop === 'walls' && (
+        <div className="hud-popover hud-popover-sm">
+          <div className="popover-head">벽 표시 모드</div>
+          <div className="popover-list">
+            {WALL_MODES.map((w) => (
+              <button
+                key={w.id}
+                className={'popover-item' + (show.walls === w.id ? ' on' : '')}
+                onClick={() => {
+                  setShow({ walls: w.id });
+                  setPop(null);
+                }}
+              >
+                <span>{w.label}</span>
+                {show.walls === w.id && <Check size={13} />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {pop === 'layers' && (
+        <div className="hud-popover">
+          <div className="popover-head">표시 레이어 · 스냅</div>
+          <label className="chk-row">
+            <input type="checkbox" checked={show.dims} onChange={(e) => setShow({ dims: e.target.checked })} />
+            <span>선택 가구 치수 · 4방향 여유(cm)</span>
+          </label>
+          <label className="chk-row">
+            <input type="checkbox" checked={show.clearance} onChange={(e) => setShow({ clearance: e.target.checked })} />
+            <span>사용 공간 가이드 (문·서랍·의자)</span>
+          </label>
+          <label className="chk-row">
+            <input type="checkbox" checked={show.heatmap} onChange={(e) => setShow({ heatmap: e.target.checked })} />
+            <span>동선 폭 히트맵</span>
+          </label>
+          <label className="chk-row">
+            <input type="checkbox" checked={show.collisions} onChange={(e) => setShow({ collisions: e.target.checked })} />
+            <span>겹침·문 막힘 표시</span>
+          </label>
+          <label className="chk-row">
+            <input type="checkbox" checked={show.grid} onChange={(e) => setShow({ grid: e.target.checked })} />
+            <span>바닥 50cm 격자</span>
+          </label>
+          <label className="chk-row">
+            <input type="checkbox" checked={show.labels} onChange={(e) => setShow({ labels: e.target.checked })} />
+            <span>방·가구 이름표</span>
+          </label>
+          <div className="hud-sep" />
+          <label className="chk-row">
+            <input
+              type="checkbox"
+              checked={snap.walls && snap.objects}
+              onChange={(e) => setSnap({ walls: e.target.checked, objects: e.target.checked, grid: e.target.checked ? 1 : 0, angle: e.target.checked ? 15 : 0 })}
+            />
+            <span>자석 스냅 (1cm · 벽/가구 밀착)</span>
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ contextual selection action bar
+function swapPosition(it: PlacedItem, from: Product, to: Product) {
+  const oldD = (it.dims ?? from.dims).d;
+  const { uz } = itemAxes(it.rot);
+  const back: [number, number] = [it.x - (uz[0] * oldD) / 2, it.z - (uz[1] * oldD) / 2];
+  return { x: back[0] + (uz[0] * to.dims.d) / 2, z: back[1] + (uz[1] * to.dims.d) / 2 };
+}
+
+function SelectionBar() {
+  const project = useStore((s) => s.project)!;
+  const selection = useStore((s) => s.selection);
+  const updateItems = useStore((s) => s.updateItems);
+  const duplicateSelected = useStore((s) => s.duplicateSelected);
+  const removeSelected = useStore((s) => s.removeSelected);
+  const notify = useStore((s) => s.notify);
+  const v = activeVersion(project)!;
+  const items = v.items.filter((i) => selection.includes(i.id));
+  const people = v.people.filter((h) => selection.includes(h.id));
+  const [swapOpen, setSwapOpen] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  useOutsideClose(swapOpen, barRef, () => setSwapOpen(false));
+
+  useEffect(() => {
+    setSwapOpen(false);
+  }, [selection]);
+
+  // Single person avatar selected
+  if (people.length === 1 && !items.length) {
+    const h = people[0];
+    const prof = project.profiles.find((p) => p.id === h.profileId) ?? project.profiles[0];
+    const setH = (pose: Pose) =>
+      updateItems([h.id], (x) => Object.assign(x as unknown as typeof h, { pose, y: pose === 'sit' ? h.y || 45 : pose === 'lie' ? h.y || 42 : 0 }));
+    return (
+      <div className="selection-bar" ref={barRef}>
+        <span className="sel-bar-name">
+          {prof?.name} <em className="mono">{prof?.height}cm</em>
+        </span>
+        <span className="pill-sep" />
+        {(
+          [
+            ['stand', '서기'],
+            ['sit', '앉기'],
+            ['lie', '눕기'],
+          ] as [Pose, string][]
+        ).map(([pose, label]) => (
+          <button key={pose} className={'sel-bar-btn' + (h.pose === pose ? ' on' : '')} onClick={() => setH(pose)}>
+            {label}
+          </button>
+        ))}
+        <span className="pill-sep" />
+        <button className="sel-bar-btn danger" onClick={removeSelected} title="아바타 삭제">
+          <Trash2 size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  // Multiple furniture items selected
+  if (items.length > 1) {
+    const allLocked = items.every((i) => i.locked);
+    return (
+      <div className="selection-bar" ref={barRef}>
+        <span className="sel-bar-name mono">{items.length}개 선택</span>
+        <span className="pill-sep" />
+        <button className="sel-bar-btn" onClick={duplicateSelected} title="복제 (Cmd+D)">
+          <Copy size={14} /> <span>복제</span>
+        </button>
+        <button className="sel-bar-btn" onClick={() => updateItems(selection, (x) => (x.locked = !allLocked))} title="고정 전환">
+          {allLocked ? <Unlock size={14} /> : <Lock size={14} />} <span>{allLocked ? '고정 해제' : '고정'}</span>
+        </button>
+        <button className="sel-bar-btn danger" onClick={removeSelected} title="삭제">
+          <Trash2 size={14} />
+        </button>
+      </div>
+    );
+  }
+
+  // Single furniture item selected
+  if (items.length !== 1) return null;
+  const it = items[0];
+  const prod = getProduct(it.productId, project);
+  if (!prod) return null;
+
+  const all = [...project.customProducts, ...PRODUCTS];
+  const candidates = prod.builtin
+    ? []
+    : all
+        .filter((p) => p.category === prod.category && p.id !== prod.id)
+        .sort((a, b) => (project.shortlist.includes(b.id) ? 1 : 0) - (project.shortlist.includes(a.id) ? 1 : 0))
+        .slice(0, 12);
+
+  const doSwap = (to: Product) => {
+    const pos = swapPosition(it, prod, to);
+    updateItems([it.id], (x) => {
+      const prevId = x.productId;
+      x.productId = to.id;
+      x.label = undefined;
+      x.x = pos.x;
+      x.z = pos.z;
+      x.dims = undefined;
+      x.params = undefined;
+      x.mats = undefined;
+      const set = new Set([...(x.alts ?? []), prevId]);
+      set.delete(to.id);
+      x.alts = [...set];
+    });
+    setSwapOpen(false);
+    notify(`'${to.name}'로 교체했어요`);
+  };
+
+  return (
+    <div className="selection-bar" ref={barRef}>
+      <span className="sel-bar-name" title={it.label || prod.name}>
+        {it.label || prod.name}
+      </span>
+      <span className="pill-sep" />
+      <button
+        className="sel-bar-btn"
+        disabled={it.locked}
+        onClick={() => updateItems([it.id], (x) => (x.rot = normDeg(x.rot - 90)))}
+        title="90° 회전 (R)"
+      >
+        <RotateCw size={14} /> <span>90°</span>
+      </button>
+      <button
+        className={'sel-bar-btn' + (it.mirror ? ' on' : '')}
+        disabled={it.locked}
+        onClick={() => updateItems([it.id], (x) => (x.mirror = !x.mirror))}
+        title="좌우 반전"
+      >
+        <FlipHorizontal size={14} />
+      </button>
+      {candidates.length > 0 && (
+        <button className={'sel-bar-btn' + (swapOpen ? ' on' : '')} onClick={() => setSwapOpen((x) => !x)} title="이 자리에 다른 판매 후보 교체">
+          <RefreshCw size={14} /> <span>교체</span>
+        </button>
+      )}
+      <button className="sel-bar-btn" onClick={() => testWithHuman(it, prod)} title="사람 아바타로 사용 공간 확인">
+        <UserCheck size={14} /> <span>사람</span>
+      </button>
+      <span className="pill-sep" />
+      <button className="sel-bar-btn" onClick={duplicateSelected} title="복제 (Cmd+D)">
+        <Copy size={14} />
+      </button>
+      <button className={'sel-bar-btn' + (it.locked ? ' on' : '')} onClick={() => updateItems([it.id], (x) => (x.locked = !x.locked))} title={it.locked ? '고정 풀기 (L)' : '고정 (L)'}>
+        {it.locked ? <Unlock size={14} /> : <Lock size={14} />}
+      </button>
+      <button className="sel-bar-btn danger" disabled={it.locked} onClick={removeSelected} title="삭제 (Delete)">
+        <Trash2 size={14} />
+      </button>
+
+      {swapOpen && (
+        <div className="hud-popover swap-popover">
+          <div className="popover-head">이 자리 후보 교체 · 뒷면 위치 유지</div>
+          <div className="popover-list">
+            {candidates.map((cand) => (
+              <button key={cand.id} className="popover-item swap-pop-item" onClick={() => doSwap(cand)}>
+                <span className="color-dot" style={{ background: Object.values(resolveMats(cand))[0]?.color }} />
+                <div className="swap-pop-info">
+                  <div className="swap-pop-name">{cand.name}</div>
+                  <div className="swap-pop-sub mono">
+                    {cand.brand} · {cand.dims.w}×{cand.dims.d}
+                    {cand.price ? ` · ${fmtWon(cand.price)}` : ''}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ compact bottom-right camera bar
 function CameraBar() {
   const view = useStore((s) => s.view);
   const setView = useStore((s) => s.setView);
   const measure = useStore((s) => s.measure);
   const requestShot = useStore((s) => s.requestShot);
+  const [presetOpen, setPresetOpen] = useState(false);
+  const barRef = useRef<HTMLDivElement>(null);
+  useOutsideClose(presetOpen, barRef, () => setPresetOpen(false));
+
   const go = (p: 'iso' | 'window' | 'entry' | 'desk') => {
+    setPresetOpen(false);
     if (view !== '3d') {
       setView('3d');
       setTimeout(() => requestCamera(p), 60);
     } else requestCamera(p);
   };
+
   return (
-    <div className="camera-bar">
-      <button onClick={() => go('iso')}>전체 3D</button>
-      <button onClick={() => go('window')}>창가 뷰</button>
-      <button onClick={() => go('entry')}>현관→거실</button>
-      <button onClick={() => go('desk')}>책상·붙박이장</button>
-      <button className={view === 'top' ? 'on' : ''} onClick={() => setView(view === 'top' ? '3d' : 'top')}>
+    <div className="camera-bar" ref={barRef}>
+      <button className={view === '3d' ? 'on' : ''} onClick={() => go('iso')} title="전체 3D 시점">
+        ISO
+      </button>
+      <button className={view === 'top' ? 'on' : ''} onClick={() => setView(view === 'top' ? '3d' : 'top')} title="수직 탑뷰">
         탑뷰
       </button>
-      <span className="cam-sep" />
-      <button onClick={() => requestCamera('zoom', { f: 0.8 })} disabled={view === 'top'}>
-        ＋
+      <button className={presetOpen ? 'on' : ''} onClick={() => setPresetOpen((x) => !x)} title="시점 프리셋">
+        시점 <ChevronDown size={11} />
       </button>
-      <button onClick={() => requestCamera('zoom', { f: 1.25 })} disabled={view === 'top'}>
-        －
+      <span className="cam-sep" />
+      <button onClick={() => requestCamera('zoom', { f: 0.8 })} disabled={view === 'top'} title="확대" aria-label="확대">
+        <Plus size={13} />
+      </button>
+      <button onClick={() => requestCamera('zoom', { f: 1.25 })} disabled={view === 'top'} title="축소" aria-label="축소">
+        <Minus size={13} />
       </button>
       <span className="cam-sep" />
       <button
-        className={measure ? 'on' : ''}
-        title="줄자 — 두 점을 클릭해 길이 재기"
+        className={measure ? 'accent' : ''}
+        title="줄자 (M) — 두 점을 클릭해 길이 재기"
+        aria-label="줄자"
         onClick={() => {
           useStore.setState({ measure: !measure, placing: null, placingPerson: null });
           useScene.getState().set({ measureStart: null, measureHover: null });
@@ -351,9 +823,21 @@ function CameraBar() {
       >
         <Ruler size={13} />
       </button>
-      <button title="3D PNG 캡처" onClick={requestShot}>
+      <button title="3D PNG 캡처" aria-label="3D 캡처" onClick={requestShot}>
         <Camera size={13} />
       </button>
+
+      {presetOpen && (
+        <div className="hud-popover hud-popover-right hud-popover-sm">
+          <div className="popover-head">시점 이동</div>
+          <div className="popover-list">
+            <button className="popover-item" onClick={() => go('iso')}>전체 3D</button>
+            <button className="popover-item" onClick={() => go('window')}>창가 뷰</button>
+            <button className="popover-item" onClick={() => go('entry')}>현관 → 거실</button>
+            <button className="popover-item" onClick={() => go('desk')}>책상 · 붙박이장</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -369,9 +853,9 @@ function PlaceHint() {
   return (
     <div className="place-hint">
       <Crosshair size={13} />
-      {placing && `${name} — 놓을 곳 클릭 · R 회전 · Shift+클릭 여러 개`}
+      {placing && `${name} — 놓을 곳 클릭 · R 회전 · Shift+클릭 연속 배치`}
       {placingPerson && '사람을 세울 곳을 클릭'}
-      {measure && '두 점을 클릭해 길이 재기'}
+      {measure && '두 점을 클릭해 거리 측정'}
       {measure && measures.length > 0 && <button onClick={() => useScene.getState().set({ measures: [] })}>지우기</button>}
       <button
         onClick={() => {
@@ -394,11 +878,11 @@ function HeatLegend() {
   const id = ideals(prof.height, prof.shoulder);
   return (
     <div className="stage-legend">
-      <span style={{ color: '#e5484d' }}>■</span> 몸이 못 지나감 (&lt;{Math.round(id.passMin)}cm)
-      <span style={{ color: '#f08c00' }}>■</span> 옆으로 지나가야 함 (&lt;75)
-      <span style={{ color: '#e0b100' }}>■</span> 한 사람 OK (&lt;90)
-      <span style={{ color: '#30a46c' }}>■</span> 넉넉함
-      <span style={{ color: '#7c4dff' }}>■</span> 현관에서 갈 수 없는 곳
+      <span className="legend-dot" style={{ background: '#e5484d' }} /> 통과 불가 (&lt;{Math.round(id.passMin)}cm)
+      <span className="legend-dot" style={{ background: '#f08c00' }} /> 좁음 (&lt;75cm)
+      <span className="legend-dot" style={{ background: '#e0b100' }} /> 1인 통행 (&lt;90cm)
+      <span className="legend-dot" style={{ background: '#30a46c' }} /> 여유
+      <span className="legend-dot" style={{ background: '#7c4dff' }} /> 도달 불가
     </div>
   );
 }
@@ -416,14 +900,12 @@ function PovHud() {
       <div className="walk-cross" />
       <div className="pov-hud">
         <div className="pov-hud-title">
-          <Eye size={15} />
+          <Eye size={14} />
           <span>
-            1인칭 눈높이 체험 (키 {prof.height}cm · {pose === 'sit' ? '착석 시점' : pose === 'lie' ? '침대 와식 시점' : '서서/걷기 시점'} · 눈높이 {Math.round(eye ?? a.eyeH)}cm)
+            1인칭 눈높이 · {prof.height}cm ({pose === 'sit' ? '착석' : pose === 'lie' ? '와식' : '보행'} {Math.round(eye ?? a.eyeH)}cm)
           </span>
         </div>
-        <div className="pov-hud-sub">
-          <b>W·A·S·D</b> 또는 방향키로 걸어 다니기 · <b>마우스 드래그</b>로 둘러보기 · Shift 빠르게
-        </div>
+        <div className="pov-hud-sub">WASD / 방향키 이동 · 드래그 둘러보기 · Shift 빠르게</div>
         <div className="pov-hud-btns">
           <button className={pose === 'stand' ? 'on' : ''} onClick={() => set({ walkPose: 'stand' })}>
             서서 걷기
@@ -435,7 +917,7 @@ function PovHud() {
             누운 눈높이
           </button>
           <button className="exit-pov" onClick={() => setView('3d')}>
-            3D 전체로 나가기
+            나가기 (Esc)
           </button>
         </div>
       </div>
@@ -454,7 +936,7 @@ function ShotModal() {
   return (
     <Modal
       title="3D 이미지 캡처"
-      sub="버전 썸네일로도 저장했어요"
+      sub="현재 버전 썸네일에도 함께 반영했어요"
       onClose={() => setShot(null)}
       size="lg"
       foot={
@@ -463,38 +945,35 @@ function ShotModal() {
         </button>
       }
     >
-      <p className="mini-note" style={{ marginTop: 0 }}>
-        저장 버튼이 안 되면 이미지를 길게 누르거나 우클릭해서 저장하세요.
-      </p>
-      <img src={shot.full} alt="" style={{ width: '100%', borderRadius: 10 }} />
+      <img src={shot.full} alt="" style={{ width: '100%', borderRadius: 8, display: 'block' }} />
     </Modal>
   );
 }
 
 function Help({ onClose }: { onClose: () => void }) {
-  const items: [string, string][] = [
-    ['3D 공간', '가구를 끌어 옮기고 파란 고리로 돌려요. 벽·다른 가구 모서리에 자석처럼 붙어요. 아래 카메라 바로 창가·현관·책상 시점과 탑뷰로 바로 이동해요.'],
-    ['2D 평면', '도면 위에서 가구를 끌어 배치해요. 도면 편집으로 벽·문·창·방을 고치고 분양 도면 이미지를 깔아 축척을 맞출 수 있어요.'],
-    ['1인칭 체험', '기준 인물 눈높이로 걸어 다녀요. 앉은·누운 눈높이로 바꿔 답답함을 확인해요.'],
-    ['가구 후보', '실제 판매 제품 치수로 만든 3D 가구. 직접 등록에서 판매 페이지 치수·형태·색을 넣거나 제조사 3D 파일(GLB/OBJ/FBX/STL)을 올려요.'],
-    ['후보 교체', '가구를 선택하면 같은 자리에 다른 판매 후보를 바로 바꿔 넣어요 (뒤쪽 면 위치 유지).'],
-    ['사람·동선', '키를 넣으면 100점 사용성 점수와 항목별 진단(책상·식탁·조리대 높이, 통로, 침대 옆, TV, 펜던트, 거울, 반입, 조립 후 세우기)이 나와요.'],
-    ['버전저장', '배치를 여러 버전으로 저장하고 두 버전을 나란히 비교해요. 전체 백업·배치 코드·PNG 캡처도 여기서.'],
-    ['무드보드', '사진을 끌어 놓거나 붙여넣으면 5가지 컬러를 뽑아 벽지·가구에 바로 적용해요.'],
+  const shortcuts: [string, string][] = [
+    ['드래그 / 파란 고리', '가구 이동 · 회전 (벽/모서리 자석 스냅, Alt 해제)'],
+    ['우클릭 / Shift+드래그', '3D 카메라 평행 이동'],
+    ['R / Shift+R', '선택 가구 90° 회전'],
+    ['Q / E', '선택 가구 15° 미세 회전'],
+    ['화살표 / Shift+화살표', '1cm / 10cm 이동'],
+    ['PgUp / PgDn', '바닥에서 띄우기 높이 ±5cm'],
+    ['Cmd+D / Delete', '복제 / 삭제'],
+    ['H / L', '숨기기 / 고정 전환'],
+    ['1 / 2 / 3 / M', '3D / 2D 평면 / 1인칭 / 줄자'],
+    ['Cmd+Z / Cmd+Shift+Z', '되돌리기 / 다시 실행'],
+    ['Esc', '선택·배치·줄자·1인칭 해제'],
   ];
   return (
-    <Modal title="2ndhome Studio 사용법" onClose={onClose}>
-      <div className="findings-list">
-        {items.map(([t, d]) => (
-          <div key={t} className="finding-card">
-            <div className="finding-title">{t}</div>
-            <div className="finding-detail">{d}</div>
+    <Modal title="조작 및 단축키" sub="2ndhome Studio" onClose={onClose}>
+      <div className="shortcut-list">
+        {shortcuts.map(([k, desc]) => (
+          <div key={k} className="shortcut-row">
+            <kbd className="mono">{k}</kbd>
+            <span>{desc}</span>
           </div>
         ))}
       </div>
-      <p className="mini-note" style={{ lineHeight: 1.8 }}>
-        단축키: R / Shift+R 90° 회전 · Q / E 15° · 화살표 1cm (Shift 10cm) · PgUp/PgDn 높이 · Ctrl+D 복제 · Delete 삭제 · H 숨기기 · L 고정 · Ctrl+Z 되돌리기 · 1 3D · 2 평면 · 3 1인칭 · M 줄자 · Esc 취소
-      </p>
     </Modal>
   );
 }
@@ -581,4 +1060,3 @@ function useKeys() {
 }
 
 export { useMemo };
-

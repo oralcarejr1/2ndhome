@@ -46,12 +46,33 @@ export interface SnapOpts {
   angle: number;
 }
 
+export type ThemeMode = 'dark' | 'light';
+
+function readInitialTheme(): ThemeMode {
+  try {
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('2ndhome:theme') === 'light') return 'light';
+  } catch {
+    /* ignore */
+  }
+  return 'dark';
+}
+
+function applyTheme(t: ThemeMode) {
+  try {
+    if (typeof document !== 'undefined') document.documentElement.dataset.theme = t;
+    if (typeof localStorage !== 'undefined') localStorage.setItem('2ndhome:theme', t);
+  } catch {
+    /* ignore */
+  }
+}
+
 interface State {
   ready: boolean;
   project: Project | null;
   projectList: { id: string; name: string; t: number }[];
   mode: AppMode;
   view: ViewMode;
+  theme: ThemeMode;
   selection: string[];
   placing: { productId: string; params?: PlacedItem['params']; dims?: PlacedItem['dims'] } | null;
   placingPerson: Pose | null;
@@ -79,6 +100,8 @@ interface State {
   logout: () => Promise<void>;
   setMode: (m: AppMode) => void;
   setView: (v: ViewMode) => void;
+  setTheme: (t: ThemeMode) => void;
+  toggleTheme: () => void;
   setPanel: (p: string) => void;
   setShow: (p: Partial<ShowOpts>) => void;
   setSnap: (p: Partial<SnapOpts>) => void;
@@ -431,12 +454,16 @@ export const useStore = create<State>((set, get) => {
     persist(quiet);
   };
 
+  const initialTheme = readInitialTheme();
+  applyTheme(initialTheme);
+
   return {
     ready: false,
     project: null,
     projectList: [],
     mode: 'layout',
     view: '3d',
+    theme: initialTheme,
     selection: [],
     placing: null,
     placingPerson: null,
@@ -549,6 +576,15 @@ export const useStore = create<State>((set, get) => {
 
     setMode: (m) => set({ mode: m, placing: null, measure: false }),
     setView: (v) => set({ view: v }),
+    setTheme: (t) => {
+      applyTheme(t);
+      set({ theme: t });
+    },
+    toggleTheme: () => {
+      const next: ThemeMode = get().theme === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      set({ theme: next });
+    },
     setPanel: (p) => set({ panel: p, rightOpen: true }),
     setShow: (p) => set({ show: { ...get().show, ...p } }),
     setSnap: (p) => set({ snap: { ...get().snap, ...p } }),
