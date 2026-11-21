@@ -455,6 +455,7 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
   const deleteProject = useStore((s) => s.deleteProject);
   const sync = useStore((s) => s.sync);
   const logout = useStore((s) => s.logout);
+  const syncError = useStore((s) => s.syncError);
   const [name, setName] = useState('');
   const [note, setNote] = useState('');
   const [importText, setImportText] = useState('');
@@ -609,6 +610,11 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
           <p className="mini-note" style={{ marginTop: 0 }}>
             {syncText(sync).long}. 모든 기기를 한 번에 로그아웃시키려면 Vercel에서 APP_PASSWORD를 바꾸세요.
           </p>
+          {syncError && syncError !== 'not_configured' && (
+            <div className="callout bad" style={{ wordBreak: 'break-word' }}>
+              서버 저장소 오류: {syncError}
+            </div>
+          )}
           <button className="btn-xs full-width" onClick={() => void logout()}>
             이 기기에서 로그아웃
           </button>

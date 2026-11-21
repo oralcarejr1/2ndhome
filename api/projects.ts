@@ -24,7 +24,7 @@ export default {
 };
 
 async function handle(req: Request): Promise<Response> {
-  const s = storage();
+  const s = storage(req);
   const q = new URL(req.url).searchParams;
   const id = q.get('id');
 

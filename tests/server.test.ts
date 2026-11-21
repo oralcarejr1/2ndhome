@@ -6,7 +6,7 @@ import projects from '../api/projects';
 import session from '../api/session';
 import middleware from '../middleware';
 import { makeToken, verifyToken } from '../server/auth';
-import { Conflict, setStorage, type FileStat, type Storage } from '../server/store';
+import { Conflict, credsFrom, setStorage, type FileStat, type Storage } from '../server/store';
 
 function memStorage(): Storage {
   const m = new Map<string, { body: Uint8Array; type: string; at: number }>();
@@ -157,5 +157,39 @@ describe('files api', () => {
     const html = await files.fetch(req('/api/files', { method: 'POST', body: '<script>', headers: { 'content-type': 'text/html' } }));
     const hid = (await html.json()).id;
     expect((await files.fetch(req(`/api/files?id=${hid}`))).headers.get('content-type')).toBe('application/octet-stream');
+  });
+});
+
+describe('blob credentials', () => {
+  it('uses the per-request OIDC token with BLOB_STORE_ID (newer Vercel Blob stores)', () => {
+    const r = new Request(URL0 + '/api/projects', { headers: { 'x-vercel-oidc-token': ' tok ' } });
+    delete process.env.BLOB_STORE_ID;
+    expect(credsFrom(r)).toEqual({});
+    process.env.BLOB_STORE_ID = 'store_abc';
+    try {
+      expect(credsFrom(r)).toEqual({ oidcToken: 'tok', storeId: 'store_abc' });
+      expect(credsFrom(new Request(URL0))).toEqual({});
+    } finally {
+      delete process.env.BLOB_STORE_ID;
+    }
+  });
+
+  it('session reports a broken store instead of failing silently', async () => {
+    const broken: Storage = {
+      read: async () => null,
+      stat: async () => {
+        throw new Error('Vercel Blob: access denied');
+      },
+      write: async () => ({ etag: 'x' }),
+      remove: async () => {},
+      listPrefix: async () => [],
+    };
+    setStorage(broken);
+    try {
+      const s = await (await session.fetch(req('/api/session'))).json();
+      expect(s).toMatchObject({ auth: true, storage: false, storageError: 'Vercel Blob: access denied' });
+    } finally {
+      setStorage(memStorage());
+    }
   });
 });

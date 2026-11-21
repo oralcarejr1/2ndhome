@@ -33,18 +33,32 @@ export class NotConfigured extends Error {
   }
 }
 
-const blobConfigured = () => !!(process.env.BLOB_READ_WRITE_TOKEN || (process.env.VERCEL_OIDC_TOKEN && process.env.BLOB_STORE_ID));
+// Two ways a Vercel project can be connected to its Blob store:
+//  - BLOB_READ_WRITE_TOKEN (older stores), or
+//  - BLOB_STORE_ID + a short-lived OIDC token that Vercel attaches to every function request as the
+//    `x-vercel-oidc-token` header (newer stores). We pass that header's token to the SDK explicitly.
+const blobConfigured = () => !!(process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID);
 
-const blobStorage: Storage = {
+export interface BlobCreds {
+  oidcToken?: string;
+  storeId?: string;
+}
+export function credsFrom(req?: Request): BlobCreds {
+  const oidcToken = req?.headers.get('x-vercel-oidc-token')?.trim();
+  const storeId = process.env.BLOB_STORE_ID?.trim();
+  return oidcToken && storeId ? { oidcToken, storeId } : {};
+}
+
+const blobStorage = (c: BlobCreds): Storage => ({
   async read(path, fresh = true) {
-    const r = await get(path, { access: 'private', useCache: !fresh });
+    const r = await get(path, { access: 'private', useCache: !fresh, ...c });
     if (!r || r.statusCode !== 200) return null;
     const body = new Uint8Array(await new Response(r.stream).arrayBuffer());
     return { body, type: r.blob.contentType, etag: r.blob.etag };
   },
   async stat(path) {
     try {
-      const h = await head(path);
+      const h = await head(path, c);
       return { path: h.pathname, etag: h.etag, size: h.size, at: new Date(h.uploadedAt).getTime() };
     } catch (e) {
       if (e instanceof BlobNotFoundError) return null;
@@ -60,6 +74,7 @@ const blobStorage: Storage = {
         allowOverwrite: true,
         cacheControlMaxAge: 60,
         ...(ifMatch ? { ifMatch } : {}),
+        ...c,
       });
       return { etag: r.etag };
     } catch (e) {
@@ -68,28 +83,29 @@ const blobStorage: Storage = {
     }
   },
   async remove(path) {
-    await del(path);
+    await del(path, c);
   },
   async listPrefix(prefix) {
     const out: FileStat[] = [];
     let cursor: string | undefined;
     do {
-      const r = await list({ prefix, cursor, limit: 1000 });
+      const r = await list({ prefix, cursor, limit: 1000, ...c });
       for (const b of r.blobs) out.push({ path: b.pathname, etag: b.etag, size: b.size, at: new Date(b.uploadedAt).getTime() });
       cursor = r.hasMore ? r.cursor : undefined;
     } while (cursor);
     return out;
   },
-};
+});
 
 let override: Storage | null = null;
 export function setStorage(s: Storage | null) {
   override = s;
 }
-export function storage(): Storage {
+/** Pass the incoming request so its OIDC token (if any) is used for the Blob calls. */
+export function storage(req?: Request): Storage {
   if (override) return override;
   if (!blobConfigured()) throw new NotConfigured();
-  return blobStorage;
+  return blobStorage(credsFrom(req));
 }
 export function storageConfigured() {
   return !!override || blobConfigured();

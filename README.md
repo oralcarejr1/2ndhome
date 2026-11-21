@@ -44,7 +44,7 @@ npm run build      # dist/ 정적 파일 — 어디든 올리면 동작
 
 이 저장소가 Vercel에 연결돼 있어 `main`에 올라가면 프로덕션, 다른 브랜치·PR은 미리보기로 자동 배포됩니다(`vercel.json`). 처음 한 번만 Vercel 대시보드에서:
 
-1. **Storage → Create → Blob** — 접근 방식을 고르라고 하면 **Private**. 만든 뒤 이 프로젝트(2ndhome)에 **Connect** (환경 변수 `BLOB_READ_WRITE_TOKEN`이 자동으로 들어감)
+1. **Storage → Create → Blob** — 접근 방식을 고르라고 하면 **Private**. 만든 뒤 이 프로젝트(2ndhome)에 **Connect** (환경 변수 `BLOB_STORE_ID` 또는 `BLOB_READ_WRITE_TOKEN`이 자동으로 들어감 — 둘 다 지원)
 2. **Settings → Environment Variables** — `APP_PASSWORD` = 들어갈 때 쓸 비밀번호 (Production·Preview 모두)
 3. **Deployments → 최신 배포 → Redeploy** (환경 변수는 다시 배포해야 적용)
 

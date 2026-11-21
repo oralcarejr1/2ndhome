@@ -66,6 +66,8 @@ interface State {
   sync: 'local' | 'artifact' | 'server' | 'server-nostore';
   /** password screen: shown when the server says this device isn't signed in */
   gate: 'checking' | 'login' | 'open';
+  /** why server storage isn't usable, as reported by the server */
+  syncError?: string;
   toast: { msg: string; t: number } | null;
   panel: string; // right panel tab
   leftOpen: boolean;
@@ -467,7 +469,7 @@ export const useStore = create<State>((set, get) => {
         set({ sync: 'server', cloud: 'on' });
         await syncAll(); // pull before showing anything, so every device opens on the same content
         startServerWatch();
-      } else if (srv?.auth) set({ sync: 'server-nostore' });
+      } else if (srv?.auth) set({ sync: 'server-nostore', syncError: srv.storageError });
       let locals = await localListProjects();
       if (!locals.length) {
         const s = sampleProject();
@@ -496,7 +498,12 @@ export const useStore = create<State>((set, get) => {
       }
       if (srv) {
         set({ cloud: 'off' });
-        if (srv.auth && !srv.storage) get().notify('서버 저장소(Vercel Blob)가 아직 연결되지 않아 이 기기에만 저장돼요');
+        if (srv.auth && !srv.storage)
+          get().notify(
+            !srv.storageError || srv.storageError === 'not_configured'
+              ? '서버 저장소(Vercel Blob)가 아직 연결되지 않아 이 기기에만 저장돼요'
+              : `서버 저장소에 연결하지 못해 이 기기에만 저장돼요 — ${srv.storageError}`,
+          );
         return;
       }
       // account sync

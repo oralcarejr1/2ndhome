@@ -7,6 +7,8 @@ export interface SessionInfo {
   configured: boolean;
   auth: boolean;
   storage: boolean;
+  /** why server storage isn't usable ('not_configured' or the store's error message) */
+  storageError?: string;
 }
 export interface RemoteEntry {
   id: string;
@@ -39,9 +41,9 @@ export async function serverSession(): Promise<SessionInfo | null> {
   try {
     const r = await call('/api/session', {}, 6000);
     if (!r.ok || !(r.headers.get('content-type') ?? '').includes('json')) return null;
-    const d = (await r.json()) as { app?: string; configured?: boolean; auth?: boolean; storage?: boolean };
+    const d = (await r.json()) as { app?: string; configured?: boolean; auth?: boolean; storage?: boolean; storageError?: string };
     if (d?.app !== '2ndhome') return null;
-    return { configured: !!d.configured, auth: !!d.auth, storage: !!d.storage };
+    return { configured: !!d.configured, auth: !!d.auth, storage: !!d.storage, storageError: d.storageError };
   } catch {
     return null;
   }
