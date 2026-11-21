@@ -23,7 +23,7 @@ export function parseImageDataUrl(raw: string): InlineImage {
 
 export async function importProductContent(
   input: { url?: string; text?: string; image?: string },
-  signal = AbortSignal.timeout(22_000),
+  signal = AbortSignal.timeout(35_000),
 ): Promise<ImportedProduct> {
   const aiReady = isAiConfigured();
   const text = typeof input.text === 'string' ? input.text.trim().slice(0, MAX_TEXT_CHARS) : '';

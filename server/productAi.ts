@@ -40,7 +40,7 @@ export function getAiConfig(env: Env = currentEnv()): AiConfig | null {
     return {
       provider: 'gemini',
       apiKey: geminiKey,
-      model: (env.GEMINI_MODEL || env.AI_MODEL || 'gemini-3.8-flash').trim(),
+      model: (env.GEMINI_MODEL || env.AI_MODEL || 'gemini-4-hydrogen').trim(),
     };
   }
   const openaiKey = (env.OPENAI_API_KEY || '').trim();
@@ -223,10 +223,17 @@ async function callGemini(
     system_instruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
     contents: [{ role: 'user', parts }],
   };
+  const generationConfig: Record<string, unknown> = {};
+  if (/^gemini-[34]/i.test(config.model)) {
+    generationConfig.thinkingConfig = { thinkingLevel: opts.useWebTools ? 'MEDIUM' : 'LOW' };
+  }
   if (opts.useWebTools) {
     body.tools = [{ url_context: {} }, { google_search: {} }];
   } else {
-    body.generationConfig = { responseMimeType: 'application/json', temperature: 0.1 };
+    generationConfig.responseMimeType = 'application/json';
+  }
+  if (Object.keys(generationConfig).length > 0) {
+    body.generationConfig = generationConfig;
   }
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(config.model)}:generateContent`;
   const res = await fetch(endpoint, {

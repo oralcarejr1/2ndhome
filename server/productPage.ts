@@ -792,7 +792,7 @@ async function fetchSpecImages(imageUrls: string[], signal: AbortSignal): Promis
 
 export async function readProductPage(
   input: string,
-  signal = AbortSignal.timeout(22_000),
+  signal = AbortSignal.timeout(35_000),
 ): Promise<ImportedProduct> {
   const normalizedUrl = normalizeProductUrl(input);
   const aiReady = isAiConfigured();

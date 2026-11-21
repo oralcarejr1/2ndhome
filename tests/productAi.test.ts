@@ -3,6 +3,7 @@ import {
   extractJsonObject,
   extractWithAi,
   getAiConfig,
+  lookupUrlWithGemini,
   mergeImportedProducts,
   sanitizeAiProduct,
 } from '../server/productAi';
@@ -17,7 +18,7 @@ describe('AI product extraction', () => {
     expect(getAiConfig({ GEMINI_API_KEY: 'g', OPENAI_API_KEY: 'o' })).toEqual({
       provider: 'gemini',
       apiKey: 'g',
-      model: 'gemini-3.8-flash',
+      model: 'gemini-4-hydrogen',
     });
     expect(getAiConfig({ OPENAI_API_KEY: 'o', AI_MODEL: 'gpt-6.2-sol' })).toEqual({
       provider: 'openai',
@@ -118,5 +119,50 @@ describe('AI product extraction', () => {
       dims: { w: 160, d: 85, h: 74 }, // complete AI image dims filled in
       brand: '까사미아',
     });
+  });
+
+  it('calls gemini-4-hydrogen without sampling params and sets thinkingLevel', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  text: JSON.stringify({
+                    name: '클레어 3인 소파',
+                    brand: '한샘',
+                    category: 'sofa',
+                    dims: { w: 210, d: 95, h: 85 },
+                  }),
+                },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const extracted = await extractWithAi(
+      { url: 'https://store.ohou.se/goods/123', text: '클레어 3인 소파' },
+      { env: { GEMINI_API_KEY: 'test-key' } },
+    );
+    expect(extracted).toMatchObject({ name: '클레어 3인 소파', dims: { w: 210, d: 95, h: 85 } });
+    expect(fetchMock.mock.calls[0][0]).toContain('/models/gemini-4-hydrogen:generateContent');
+    const body1 = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body1.generationConfig).toEqual({
+      thinkingConfig: { thinkingLevel: 'LOW' },
+      responseMimeType: 'application/json',
+    });
+    expect(body1.generationConfig.temperature).toBeUndefined();
+
+    await lookupUrlWithGemini('https://store.ohou.se/goods/123', { env: { GEMINI_API_KEY: 'test-key' } });
+    const body2 = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(body2.generationConfig).toEqual({
+      thinkingConfig: { thinkingLevel: 'MEDIUM' },
+    });
+    expect(body2.tools).toEqual([{ url_context: {} }, { google_search: {} }]);
   });
 });
