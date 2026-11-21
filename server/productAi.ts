@@ -4,6 +4,7 @@ import {
   VALID_MAT_KINDS,
   VALID_MODELS,
   VALID_MOUNTS,
+  type AiErrorKind,
   type ImportedProduct,
   type ImportedProductOption,
 } from '../src/lib/productImport.js';
@@ -209,12 +210,111 @@ export function sanitizeAiProduct(raw: Record<string, unknown>, url?: string): I
   };
 }
 
+type GeminiWebTool = 'url_context' | 'google_search';
+
+interface GeminiCallResult {
+  text: string | null;
+  error?: AiErrorKind;
+  status?: number;
+  message?: string;
+}
+
+const TRACKING_PARAMS = new Set([
+  'affect_type',
+  'affect_id',
+  'gclid',
+  'fbclid',
+  'napm',
+  'n_media',
+  'n_query',
+  'n_rank',
+  'n_ad_group',
+  'n_ad',
+  'n_keyword_id',
+  'n_keyword',
+  'n_campaign_type',
+  'ref',
+  'referer',
+  'src',
+  'from',
+  'channel',
+  'inflow',
+  'trackingcode',
+]);
+
+export function cleanUrlForLookup(rawUrl: string): { cleanUrl: string; hints: string[] } {
+  const hints: string[] = [];
+  let cleanUrl = rawUrl;
+  try {
+    const u = new URL(rawUrl);
+    for (const key of Array.from(u.searchParams.keys())) {
+      if (key.toLowerCase().startsWith('utm_') || TRACKING_PARAMS.has(key.toLowerCase())) {
+        u.searchParams.delete(key);
+      }
+    }
+    cleanUrl = u.href;
+    const host = u.hostname.toLowerCase();
+    if (host === 'ohou.se' || host === 'www.ohou.se' || host === 'store.ohou.se') {
+      const m = /^\/(?:productions|goods)\/(\d+)/i.exec(u.pathname);
+      if (m) {
+        const id = m[1];
+        cleanUrl = `https://store.ohou.se/goods/${id}`;
+        hints.push(`Store: 오늘의집 (Ohouse), product ID: ${id}`);
+        hints.push(`Canonical URLs: https://store.ohou.se/goods/${id} and https://ohou.se/productions/${id}/selling`);
+      }
+    } else if (/\.ikea\.com$/i.test(host)) {
+      const m = /\/p\/([^/]+)-([s]?\d{8})\/?$/i.exec(u.pathname);
+      if (m) hints.push(`Store: IKEA, slug: ${m[1]}, article: ${m[2]}`);
+    } else if (/^(?:smartstore|brand)\.naver\.com$/i.test(host)) {
+      const m = /^\/([^/]+)\/products\/(\d+)/i.exec(u.pathname);
+      if (m) hints.push(`Store: 네이버 스마트스토어 (${m[1]}), product ID: ${m[2]}`);
+    } else if (/(?:^|\.)coupang\.com$/i.test(host)) {
+      const m = /\/vp\/products\/(\d+)/i.exec(u.pathname);
+      if (m) hints.push(`Store: 쿠팡 (Coupang), product ID: ${m[1]}`);
+    }
+  } catch { /* keep rawUrl */ }
+  return { cleanUrl, hints };
+}
+
+export function classifyGeminiError(status: number, bodyText: string): { kind: AiErrorKind; message: string } {
+  let errStatus = '';
+  let errMessage = bodyText.trim();
+  try {
+    const parsed = JSON.parse(bodyText) as { error?: { status?: string; message?: string } };
+    if (parsed?.error) {
+      errStatus = String(parsed.error.status ?? '');
+      errMessage = String(parsed.error.message ?? errMessage);
+    }
+  } catch { /* non-JSON body */ }
+
+  const combined = `${errStatus} ${errMessage}`;
+  if (status === 401 || /API_KEY_INVALID|UNAUTHENTICATED|api[_ ]?key.*invalid/i.test(combined)) {
+    return { kind: 'auth', message: errMessage };
+  }
+  if (status === 404 || errStatus === 'NOT_FOUND' || /models\/[^\s]+.*not found/i.test(combined)) {
+    return { kind: 'model', message: errMessage };
+  }
+  if (
+    (status === 400 || status === 403 || status === 429) &&
+    /google_search|grounding|url_context|free tier|billing|search.*not (?:available|supported)|tool.*not supported/i.test(combined)
+  ) {
+    return { kind: 'tools_unavailable', message: errMessage };
+  }
+  if (status === 429 || errStatus === 'RESOURCE_EXHAUSTED' || /quota|rate limit/i.test(combined)) {
+    return { kind: 'quota', message: errMessage };
+  }
+  if (status === 403 || errStatus === 'PERMISSION_DENIED') {
+    return { kind: 'auth', message: errMessage };
+  }
+  return { kind: 'unknown', message: errMessage };
+}
+
 async function callGemini(
   config: AiConfig,
   prompt: string,
   images: InlineImage[],
-  opts: { signal?: AbortSignal; useWebTools?: boolean },
-): Promise<string | null> {
+  opts: { signal?: AbortSignal; webTools?: GeminiWebTool[] },
+): Promise<GeminiCallResult> {
   const parts: Record<string, unknown>[] = [{ text: prompt }];
   for (const img of images) {
     parts.push({ inline_data: { mime_type: img.mimeType, data: img.base64 } });
@@ -224,11 +324,12 @@ async function callGemini(
     contents: [{ role: 'user', parts }],
   };
   const generationConfig: Record<string, unknown> = {};
+  const hasWebTools = Boolean(opts.webTools?.length);
   if (/^gemini-[34]/i.test(config.model)) {
-    generationConfig.thinkingConfig = { thinkingLevel: opts.useWebTools ? 'MEDIUM' : 'LOW' };
+    generationConfig.thinkingConfig = { thinkingLevel: hasWebTools ? 'MEDIUM' : 'LOW' };
   }
-  if (opts.useWebTools) {
-    body.tools = [{ url_context: {} }, { google_search: {} }];
+  if (hasWebTools) {
+    body.tools = opts.webTools!.map((tool) => ({ [tool]: {} }));
   } else {
     generationConfig.responseMimeType = 'application/json';
   }
@@ -245,7 +346,22 @@ async function callGemini(
     body: JSON.stringify(body),
     signal: opts.signal,
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    let errBody = '';
+    try {
+      if (typeof res.text === 'function') errBody = (await res.text()).slice(0, 1000);
+      else if (typeof res.json === 'function') errBody = JSON.stringify(await res.json()).slice(0, 1000);
+    } catch { /* ignore body read error */ }
+    const classified = classifyGeminiError(res.status, errBody);
+    console.warn('[2ndhome:ai] Gemini request failed', {
+      status: res.status,
+      model: config.model,
+      tools: opts.webTools ?? [],
+      kind: classified.kind,
+      message: classified.message.slice(0, 180),
+    });
+    return { text: null, error: classified.kind, status: res.status, message: classified.message };
+  }
   const data = (await res.json()) as {
     candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
   };
@@ -254,7 +370,7 @@ async function callGemini(
     .filter((p) => typeof p.text === 'string' && !p.thought)
     .map((p) => p.text)
     .join('\n');
-  return text || null;
+  return { text: text || null, status: res.status };
 }
 
 async function callOpenAi(
@@ -286,7 +402,10 @@ async function callOpenAi(
     }),
     signal: opts.signal,
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.warn('[2ndhome:ai] OpenAI request failed', { status: res.status, model: config.model });
+    return null;
+  }
   const data = (await res.json()) as {
     choices?: { message?: { content?: string } }[];
   };
@@ -321,7 +440,10 @@ async function callAnthropic(
     }),
     signal: opts.signal,
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.warn('[2ndhome:ai] Anthropic request failed', { status: res.status, model: config.model });
+    return null;
+  }
   const data = (await res.json()) as {
     content?: { type?: string; text?: string }[];
   };
@@ -370,7 +492,7 @@ export async function extractWithAi(
 
   try {
     let rawText: string | null = null;
-    if (config.provider === 'gemini') rawText = await callGemini(config, prompt, images, { signal: opts.signal });
+    if (config.provider === 'gemini') rawText = (await callGemini(config, prompt, images, { signal: opts.signal })).text;
     else if (config.provider === 'openai') rawText = await callOpenAi(config, prompt, images, { signal: opts.signal });
     else if (config.provider === 'anthropic') rawText = await callAnthropic(config, prompt, images, { signal: opts.signal });
     if (!rawText) return null;
@@ -382,35 +504,126 @@ export async function extractWithAi(
   }
 }
 
+export interface WebLookupResult {
+  product: ImportedProduct | null;
+  error?: AiErrorKind;
+}
+
 /**
  * Fallback when a furniture store blocks direct server HTTP access (e.g. WAF/403).
- * Uses Gemini's built-in URL Context + Google Search grounding to retrieve publicly
- * indexed product facts. Never fabricates missing numbers.
+ * Uses Gemini's built-in URL Context + Google Search grounding with automatic
+ * tool-compatibility fallback (e.g. Gemini 4 Hydrogen free tier lacks google_search
+ * grounding, so we retry with url_context alone; if url_context returns empty on a
+ * paid key, we retry with google_search alone). Never fabricates missing numbers.
  */
-export async function lookupUrlWithGemini(
+export async function lookupUrlWithGeminiWithStatus(
   url: string,
   opts: { signal?: AbortSignal; env?: Env } = {},
-): Promise<ImportedProduct | null> {
+): Promise<WebLookupResult> {
   const config = getAiConfig(opts.env);
-  if (!config || config.provider !== 'gemini') return null;
+  if (!config || config.provider !== 'gemini') return { product: null };
 
-  const prompt = `Inspect this furniture product webpage URL and find its exact product specifications:
-${url}
+  const { cleanUrl, hints } = cleanUrlForLookup(url);
+  const hintBlock = hints.length ? `\n${hints.join('\n')}` : '';
 
-Use URL context and Google Search to look up the exact product at this URL (including Ohouse / 오늘의집 goods ID if present).
-Output ONLY a JSON object matching the schema. Return null for any field (especially dims or price) that you cannot explicitly verify from the retrieved page or search results — NEVER guess dimensions or prices.`;
+  const combinedPrompt = `Inspect this furniture product webpage URL and find its exact product specifications:
+${cleanUrl}${hintBlock}
 
-  try {
-    const rawText = await callGemini(config, prompt, [], { signal: opts.signal, useWebTools: true });
+Use URL context and Google Search to identify the exact product at this URL (including Ohouse / 오늘의집 goods ID if present).
+If you find the exact brand and model name, also verify its official dimensions (W×D×H in cm) and KRW selling price.
+Output ONLY a JSON object matching the schema. Return null for any field (especially dims or price) that you cannot explicitly verify — NEVER guess dimensions or prices.`;
+
+  const urlOnlyPrompt = `Inspect this furniture product webpage URL and extract its exact product specifications:
+${cleanUrl}${hintBlock}
+
+Read the page content via URL context and extract the product name, brand, KRW price, category, dimensions (W×D×H in cm), and size options.
+Output ONLY a JSON object matching the schema. Return null for any field that is not explicitly present — NEVER guess dimensions or prices.`;
+
+  const searchOnlyPrompt = `Search Google to identify the exact furniture product at this URL and retrieve its verified specifications:
+${cleanUrl}${hintBlock}
+
+Search for the URL path, product ID, or store listing across Korean shopping sites, price-comparison pages (네이버 쇼핑, 다나와, 오늘의집), and manufacturer spec pages.
+Once you identify the exact brand and product name, search for its official dimensions (가로 W × 깊이 D × 높이 H in cm) and KRW price.
+Output ONLY a JSON object matching the schema. Return null for any field you cannot explicitly verify from search results — NEVER guess dimensions or prices.`;
+
+  const parseCandidate = (rawText: string | null): ImportedProduct | null => {
     if (!rawText) return null;
     const parsed = extractJsonObject(rawText);
     if (!parsed) return null;
     const sanitized = sanitizeAiProduct(parsed, url);
-    if (!sanitized.name && !sanitized.dims) return null;
-    return sanitized;
-  } catch {
-    return null;
+    return sanitized.name || sanitized.dims ? sanitized : null;
+  };
+
+  try {
+    // Stage 1: URL Context + Google Search together (best on paid tier)
+    const first = await callGemini(config, combinedPrompt, [], {
+      signal: opts.signal,
+      webTools: ['url_context', 'google_search'],
+    });
+    const firstProduct = parseCandidate(first.text);
+    if (firstProduct) return { product: firstProduct };
+
+    // Stop immediately on invalid API key or unknown model name
+    if (
+      first.error === 'model' ||
+      first.status === 401 ||
+      (first.error === 'auth' && /api[_ ]?key|unauthenticated|invalid/i.test(first.message ?? ''))
+    ) {
+      return { product: null, error: first.error };
+    }
+
+    let searchUnavailable = first.error === 'tools_unavailable' || first.error === 'quota';
+
+    // Stage 2: If combined tools returned HTTP 400/403/429 (e.g., Gemini 4 Hydrogen Free Tier
+    // where google_search grounding isn't available), retry with url_context alone.
+    if (first.error && first.status && [400, 403, 429].includes(first.status)) {
+      const urlOnly = await callGemini(config, urlOnlyPrompt, [], {
+        signal: opts.signal,
+        webTools: ['url_context'],
+      });
+      const urlOnlyProduct = parseCandidate(urlOnly.text);
+      if (urlOnlyProduct) return { product: urlOnlyProduct };
+
+      if (!urlOnly.error) {
+        // url_context call succeeded (HTTP 200) so the API key is valid,
+        // meaning google_search was the missing piece on this tier.
+        return { product: null, error: first.error === 'quota' ? 'quota' : 'tools_unavailable' };
+      }
+
+      // If url_context itself was rejected (not google_search), try google_search alone below
+      if (/url_context/i.test(first.message ?? '') && !/google_search|grounding/i.test(first.message ?? '')) {
+        searchUnavailable = false;
+      } else {
+        return { product: null, error: urlOnly.error };
+      }
+    }
+
+    // Stage 3: If google_search is available and Stage 1 returned empty/unhelpful text
+    // (or rejected url_context specifically), retry with google_search alone.
+    if (!searchUnavailable) {
+      const searchOnly = await callGemini(config, searchOnlyPrompt, [], {
+        signal: opts.signal,
+        webTools: ['google_search'],
+      });
+      const searchProduct = parseCandidate(searchOnly.text);
+      if (searchProduct) return { product: searchProduct };
+      if (searchOnly.error) return { product: null, error: searchOnly.error };
+    }
+
+    return { product: null, error: first.error ?? 'not_found' };
+  } catch (err) {
+    if (opts.signal?.aborted || (err as Error)?.name === 'AbortError' || (err as Error)?.name === 'TimeoutError') {
+      return { product: null, error: 'timeout' };
+    }
+    return { product: null, error: 'unknown' };
   }
+}
+
+export async function lookupUrlWithGemini(
+  url: string,
+  opts: { signal?: AbortSignal; env?: Env } = {},
+): Promise<ImportedProduct | null> {
+  return (await lookupUrlWithGeminiWithStatus(url, opts)).product;
 }
 
 export function mergeImportedProducts(

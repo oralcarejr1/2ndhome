@@ -10,9 +10,10 @@ import {
   type ImportedProductOption,
 } from '../src/lib/productImport.js';
 import {
+  cleanUrlForLookup,
   extractWithAi,
   isAiConfigured,
-  lookupUrlWithGemini,
+  lookupUrlWithGeminiWithStatus,
   mergeImportedProducts,
   type InlineImage,
 } from './productAi.js';
@@ -32,14 +33,16 @@ export const MAX_BYTES = 5_000_000;
 const MAX_IMAGE_BYTES = 2_500_000;
 const MAX_REDIRECTS = 8;
 
-const BROWSER_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+// Honest RFC 9110 User-Agent with product/version + contact URL.
+// Ohouse (ohou.se) Akamai policy rejects anonymous/spoofed browser UAs from server IPs
+// while allowing well-formed self-identifying clients.
+const CLIENT_UA = '2ndhome/1.0 (+https://github.com/oralcarejr1/2ndhome)';
 
 const CHALLENGE_TITLE =
   /^(?:just a moment\.{0,3}|attention required!?|access denied|403 forbidden|404 not found|robot or human\??|verify you are human|security check|please wait\.{0,3}|에러\s*페이지|접근\s*제한|잠시만\s*기다려\s*주세요)$/i;
 
 const CHALLENGE_BODY =
-  /(?:cdn-cgi\/challenge-platform|cf-browser-verification|cf-challenge-running|g-recaptcha|hcaptcha|비정상적인\s*접근이\s*감지|로봇이\s*아닙니다|보안문자를\s*입력|자동\s*입력\s*방지)/i;
+  /(?:cdn-cgi\/challenge-platform|cf-browser-verification|cf-challenge-running|g-recaptcha|hcaptcha|errors\.edgesuite\.net|비정상적인\s*접근이\s*감지|로봇이\s*아닙니다|보안문자를\s*입력|자동\s*입력\s*방지)/i;
 
 export function isPublicIPv4(address: string): boolean {
   if (isIP(address) !== 4) return false;
@@ -142,12 +145,10 @@ async function fetchRemoteBuffer(
               ? callback(null, [{ address: addresses[0].address, family: 4 }])
               : callback(null, addresses[0].address, 4),
           headers: {
-            'user-agent': BROWSER_UA,
+            'user-agent': CLIENT_UA,
             accept: opts.accept,
             'accept-language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
             'accept-encoding': 'gzip, deflate, br',
-            'cache-control': 'no-cache',
-            'upgrade-insecure-requests': '1',
           },
         },
         (res) => {
@@ -248,18 +249,27 @@ async function fetchRemoteBuffer(
 }
 
 function ohouseAlternateUrls(href: string): string[] {
+  const out: string[] = [];
   try {
     const u = new URL(href);
     const host = u.hostname.toLowerCase();
     if (host === 'ohou.se' || host === 'www.ohou.se') {
       const m = /^\/(?:productions|goods)\/(\d+)/.exec(u.pathname);
-      if (m) return [`https://store.ohou.se/goods/${m[1]}`];
+      if (m) {
+        const cleanCurrent = `https://ohou.se/productions/${m[1]}/selling`;
+        if (cleanCurrent !== href) out.push(cleanCurrent);
+        out.push(`https://store.ohou.se/goods/${m[1]}`);
+      }
     } else if (host === 'store.ohou.se') {
       const m = /^\/goods\/(\d+)/.exec(u.pathname);
-      if (m) return [`https://ohou.se/productions/${m[1]}/selling`];
+      if (m) {
+        const cleanCurrent = `https://store.ohou.se/goods/${m[1]}`;
+        if (cleanCurrent !== href) out.push(cleanCurrent);
+        out.push(`https://ohou.se/productions/${m[1]}/selling`);
+      }
     }
   } catch { /* ignore */ }
-  return [];
+  return out;
 }
 
 function attrs(tag: string) {
@@ -307,6 +317,74 @@ function resolveImageUrl(raw: string, baseUrl: string): string | undefined {
   }
 }
 
+const SKIP_EMBEDDED_KEYS =
+  /^(?:related|recommend|similar|other|recent|review|banner|ad|exhibition|promotion|popular|ranking|best|curation|cart|wishlist|footer|header|nav)/i;
+
+function parseEmbeddedPrice(raw: unknown): number | undefined {
+  if (typeof raw === 'number') {
+    return Number.isFinite(raw) && raw >= 100 && raw <= 500_000_000 ? Math.round(raw) : undefined;
+  }
+  if (typeof raw === 'string') {
+    const n = Number(raw.replace(/[,\s원₩]/g, ''));
+    return Number.isFinite(n) && n >= 100 && n <= 500_000_000 ? Math.round(n) : undefined;
+  }
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as Record<string, unknown>;
+    for (const k of [
+      'finalPrice',
+      'final_price',
+      'discountedPrice',
+      'discounted_price',
+      'sellingPrice',
+      'selling_price',
+      'representativeSellingPrice',
+      'representative_selling_price',
+      'salePrice',
+      'sale_price',
+      'sellingCost',
+      'selling_cost',
+      'price',
+      'originalPrice',
+      'original_price',
+      'representativeOriginalPrice',
+      'representative_original_price',
+      'cost',
+    ]) {
+      const n = parseEmbeddedPrice(o[k]);
+      if (n !== undefined) return n;
+    }
+  }
+  return undefined;
+}
+
+function extractEmbeddedPriceFromObject(obj: Record<string, unknown>): number | undefined {
+  for (const k of [
+    'bestDiscountPrice',
+    'finalPrice',
+    'final_price',
+    'discountedPrice',
+    'discounted_price',
+    'sellingPrice',
+    'selling_price',
+    'representativeSellingPrice',
+    'representative_selling_price',
+    'salePrice',
+    'sale_price',
+    'sellingCost',
+    'selling_cost',
+    'price',
+    'cost',
+    'originalPrice',
+    'original_price',
+  ]) {
+    if (obj[k] !== undefined) {
+      const n = parseEmbeddedPrice(obj[k]);
+      if (n !== undefined) return n;
+    }
+  }
+  return undefined;
+}
+
 function collectEmbeddedJsonBlobs(html: string): unknown[] {
   const blobs: unknown[] = [];
 
@@ -315,7 +393,17 @@ function collectEmbeddedJsonBlobs(html: string): unknown[] {
   if (nextData?.[1]) {
     try {
       blobs.push(JSON.parse(nextData[1]));
-    } catch { /* ignore */ }
+    } catch {
+      try {
+        const unescaped = nextData[1]
+          .replace(/&quot;/g, '"')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&#39;/g, "'");
+        blobs.push(JSON.parse(unescaped));
+      } catch { /* ignore */ }
+    }
   }
 
   // 2) Next.js App Router RSC payload chunks: self.__next_f.push([1,"..."])
@@ -323,7 +411,12 @@ function collectEmbeddedJsonBlobs(html: string): unknown[] {
   for (const m of html.matchAll(/self\.__next_f\.push\(\[\s*1\s*,\s*"((?:[^"\\]|\\.)*)"\s*\]\)/g)) {
     try {
       const decoded = JSON.parse(`"${m[1]}"`) as string;
-      if (decoded.length < 400_000 && /(?:sellingPrice|brandName|productNotices|goodsName|production|dimensions|크기|사이즈)/i.test(decoded)) {
+      if (
+        decoded.length < 400_000 &&
+        /(?:sellingPrice|selling_price|representativeSellingPrice|brandName|brand_name|productNotices|goodsName|goods_name|production|dimensions|크기|사이즈)/i.test(
+          decoded,
+        )
+      ) {
         rscJoined += `${decoded}\n`;
       }
     } catch { /* ignore */ }
@@ -376,7 +469,7 @@ function extractEmbeddedData(html: string, baseUrl: string): EmbeddedData {
   let visited = 0;
 
   const walk = (node: unknown, depth = 0) => {
-    if (!node || typeof node !== 'object' || depth > 18 || ++visited > 15_000) return;
+    if (!node || typeof node !== 'object' || depth > 22 || ++visited > 20_000) return;
     if (Array.isArray(node)) {
       for (const item of node) walk(item, depth + 1);
       return;
@@ -384,8 +477,8 @@ function extractEmbeddedData(html: string, baseUrl: string): EmbeddedData {
     const obj = node as Record<string, unknown>;
 
     // Korean 상품정보제공고시 / notice / spec key-value item
-    const noticeKey = obj.title ?? obj.name ?? obj.label ?? obj.key ?? obj.noticeItemName;
-    const noticeVal = obj.description ?? obj.value ?? obj.content ?? obj.noticeItemValue;
+    const noticeKey = obj.title ?? obj.name ?? obj.label ?? obj.key ?? obj.noticeItemName ?? obj.itemName ?? obj.header;
+    const noticeVal = obj.description ?? obj.value ?? obj.content ?? obj.noticeItemValue ?? obj.itemValue ?? obj.body;
     if (typeof noticeKey === 'string' && typeof noticeVal === 'string' && noticeKey.length <= 40 && noticeVal.length <= 500) {
       if (/(?:크기|사이즈|치수|규격|색상|소재|재질|제조사|품명|모델명|가로|세로|깊이|높이|width|depth|height|dimension|size|material|color)/i.test(noticeKey)) {
         const k = clean(noticeKey, 40);
@@ -397,47 +490,48 @@ function extractEmbeddedData(html: string, baseUrl: string): EmbeddedData {
     }
 
     // Product-like record (Ohouse goods/production, Naver SmartStore, Shopify, Cafe24, etc.)
-    const hasPriceKey =
-      obj.sellingPrice !== undefined ||
-      obj.discountedPrice !== undefined ||
-      obj.salePrice !== undefined ||
-      obj.finalPrice !== undefined ||
-      obj.originalPrice !== undefined;
+    const detectedPrice = extractEmbeddedPriceFromObject(obj);
+    const hasPriceKey = detectedPrice !== undefined;
+    const explicitProductName =
+      obj.goodsName ?? obj.goods_name ?? obj.productionName ?? obj.production_name ?? obj.productName ?? obj.product_name;
     const hasNameKey =
-      typeof obj.goodsName === 'string' ||
-      typeof obj.productionName === 'string' ||
-      typeof obj.productName === 'string' ||
+      typeof explicitProductName === 'string' ||
       (hasPriceKey && (typeof obj.name === 'string' || typeof obj.title === 'string'));
 
     if (hasNameKey) {
-      const candidateName = clean(obj.goodsName ?? obj.productionName ?? obj.productName ?? obj.name ?? obj.title, 220);
+      const candidateName = clean(explicitProductName ?? obj.name ?? obj.title, 220);
       if (candidateName && !out.name) out.name = candidateName;
 
       const brandVal =
         typeof obj.brandName === 'string'
           ? obj.brandName
-          : typeof obj.brandTitle === 'string'
-            ? obj.brandTitle
-            : typeof obj.makerName === 'string'
-              ? obj.makerName
-              : typeof obj.brand === 'string'
-                ? obj.brand
-                : obj.brand && typeof obj.brand === 'object'
-                  ? (obj.brand as Record<string, unknown>).name ?? (obj.brand as Record<string, unknown>).title
-                  : undefined;
+          : typeof obj.brand_name === 'string'
+            ? obj.brand_name
+            : typeof obj.brandTitle === 'string'
+              ? obj.brandTitle
+              : typeof obj.brand_title === 'string'
+                ? obj.brand_title
+                : typeof obj.makerName === 'string'
+                  ? obj.makerName
+                  : typeof obj.maker_name === 'string'
+                    ? obj.maker_name
+                    : typeof obj.brand === 'string'
+                      ? obj.brand
+                      : obj.brand && typeof obj.brand === 'object'
+                        ? (obj.brand as Record<string, unknown>).name ?? (obj.brand as Record<string, unknown>).title
+                        : undefined;
       const cleanedBrand = clean(brandVal, 80);
       if (cleanedBrand && !MARKETPLACE_BRAND.test(cleanedBrand) && !out.brand) {
         out.brand = cleanedBrand;
       }
 
       if (typeof obj.currency === 'string' && !out.currency) out.currency = obj.currency;
-      const rawPrice = obj.finalPrice ?? obj.discountedPrice ?? obj.sellingPrice ?? obj.salePrice ?? obj.price ?? obj.originalPrice;
-      const n = typeof rawPrice === 'number' ? rawPrice : Number(String(rawPrice ?? '').replace(/,/g, ''));
-      if (Number.isFinite(n) && n >= 100 && n <= 500_000_000 && out.price === undefined) {
-        out.price = Math.round(n);
+      if (detectedPrice !== undefined && out.price === undefined) {
+        out.price = detectedPrice;
       }
 
       if (typeof obj.categoryName === 'string') out.categoryText.push(obj.categoryName);
+      if (typeof obj.category_name === 'string') out.categoryText.push(obj.category_name);
       if (Array.isArray(obj.categories)) {
         for (const c of obj.categories) {
           if (typeof c === 'string') out.categoryText.push(c);
@@ -452,28 +546,45 @@ function extractEmbeddedData(html: string, baseUrl: string): EmbeddedData {
     }
 
     // Detail/description image URLs
-    for (const key of ['detailImages', 'descriptionImages', 'contentImages', 'coverImages', 'images']) {
+    for (const key of [
+      'detailImages',
+      'detail_images',
+      'descriptionImages',
+      'description_images',
+      'contentImages',
+      'content_images',
+      'coverImages',
+      'cover_images',
+      'images',
+    ]) {
       const val = obj[key];
       if (Array.isArray(val)) {
         for (const item of val) {
           if (typeof item === 'string') addImage(item);
           else if (item && typeof item === 'object') {
             const imgObj = item as Record<string, unknown>;
-            addImage(imgObj.url ?? imgObj.imageUrl ?? imgObj.originalUrl ?? imgObj.src);
+            addImage(imgObj.url ?? imgObj.imageUrl ?? imgObj.image_url ?? imgObj.originalUrl ?? imgObj.original_url ?? imgObj.src);
           }
         }
       }
     }
-    if (typeof obj.contentHtml === 'string' || typeof obj.descriptionHtml === 'string' || typeof obj.detailHtml === 'string') {
-      const dhtml = String(obj.contentHtml ?? obj.descriptionHtml ?? obj.detailHtml);
-      for (const m of dhtml.matchAll(/<img\b[^>]*\b(?:src|data-src|data-original)\s*=\s*["']([^"']+)["']/gi)) {
+    for (const singleImgKey of ['coverImageUrl', 'cover_image_url', 'imageUrl', 'image_url']) {
+      if (hasNameKey && typeof obj[singleImgKey] === 'string') addImage(obj[singleImgKey]);
+    }
+    const rawDetailHtml =
+      obj.contentHtml ?? obj.content_html ?? obj.descriptionHtml ?? obj.description_html ?? obj.detailHtml ?? obj.detail_html;
+    if (typeof rawDetailHtml === 'string') {
+      for (const m of rawDetailHtml.matchAll(/<img\b[^>]*\b(?:src|data-src|data-original)\s*=\s*["']([^"']+)["']/gi)) {
         addImage(m[1]);
       }
-      const plain = clean(dhtml, 2000);
+      const plain = clean(rawDetailHtml, 2000);
       if (plain) out.descriptions.push(plain);
     }
 
-    for (const value of Object.values(obj)) walk(value, depth + 1);
+    for (const [key, value] of Object.entries(obj)) {
+      if (SKIP_EMBEDDED_KEYS.test(key)) continue;
+      walk(value, depth + 1);
+    }
   };
 
   for (const blob of blobs) walk(blob, 0);
@@ -517,7 +628,7 @@ function extractHtmlTablesAndText(html: string, baseUrl: string): { specLines: s
     const hint = `${resolved} ${a.alt ?? ''} ${a.class ?? ''}`;
     let score = 0;
     if (/(?:size|spec|dim|사이즈|치수|규격|도면|스펙)/i.test(hint)) score += 10;
-    if (/(?:detail|info|desc|product_detail|상세|ohousecdn|smartstore|pstatic)/i.test(hint)) score += 3;
+    if (/(?:detail|info|desc|product_detail|상세|ohousecdn|image\.ohou\.se|bucketplace|smartstore|pstatic)/i.test(hint)) score += 3;
     if (/(?:thumb|thumbnail|review|recommend|related|banner|event|ad_|popup)/i.test(hint)) score -= 5;
     scoredImages.push({ url: resolved, score });
   }
@@ -732,17 +843,22 @@ function extractPageSignals(html: string, url: string): PageSignals {
     ...(textDimsResult.options?.length ? { options: textDimsResult.options } : {}),
   };
 
-  const imageUrls: string[] = [];
+  const rankedImages: { url: string; score: number }[] = [];
   const seenImg = new Set<string>();
-  const pushImg = (u?: string) => {
-    if (u && !seenImg.has(u) && imageUrls.length < 12) {
-      seenImg.add(u);
-      imageUrls.push(u);
-    }
+  const pushImg = (u?: string, baseScore = 0) => {
+    if (!u || seenImg.has(u)) return;
+    seenImg.add(u);
+    let score = baseScore;
+    if (/(?:size|spec|dim|사이즈|치수|규격|도면|스펙)/i.test(u)) score += 10;
+    if (/(?:detail|info|desc|product_detail|상세|ohousecdn|image\.ohou\.se|bucketplace|smartstore|pstatic)/i.test(u)) score += 2;
+    if (/(?:thumb|thumbnail|review|recommend|related|banner|event|ad_|popup)/i.test(u)) score -= 5;
+    rankedImages.push({ url: u, score });
   };
-  for (const u of htmlInfo.imageUrls) pushImg(u);
-  for (const u of embedded.imageUrls) pushImg(u);
-  if (meta['og:image']) pushImg(resolveImageUrl(meta['og:image'], url));
+  for (const u of htmlInfo.imageUrls) pushImg(u, 1);
+  for (const u of embedded.imageUrls) pushImg(u, 1);
+  if (meta['og:image']) pushImg(resolveImageUrl(meta['og:image'], url), 0);
+  rankedImages.sort((a, b) => b.score - a.score);
+  const imageUrls = rankedImages.slice(0, 12).map((x) => x.url);
 
   const textSummary = [
     name ? `Title: ${name}` : '',
@@ -768,7 +884,7 @@ export function parseProductPage(html: string, url: string): ImportedProduct {
 
 async function fetchSpecImages(imageUrls: string[], signal: AbortSignal): Promise<InlineImage[]> {
   const out: InlineImage[] = [];
-  const candidates = imageUrls.slice(0, 3);
+  const candidates = imageUrls.slice(0, 4);
   const results = await Promise.allSettled(
     candidates.map(async (imgUrl) => {
       const imgSignal = AbortSignal.any([signal, AbortSignal.timeout(5_000)]);
@@ -796,13 +912,29 @@ export async function readProductPage(
 ): Promise<ImportedProduct> {
   const normalizedUrl = normalizeProductUrl(input);
   const aiReady = isAiConfigured();
-  const urlsToTry = [normalizedUrl, ...ohouseAlternateUrls(normalizedUrl)];
+  const queue: string[] = [];
+  const queued = new Set<string>();
+  const tried = new Set<string>();
+  const enqueue = (candidate: string) => {
+    if (!candidate || queued.has(candidate) || tried.has(candidate)) return;
+    queued.add(candidate);
+    queue.push(candidate);
+  };
+
+  enqueue(normalizedUrl);
+  const initialClean = cleanUrlForLookup(normalizedUrl).cleanUrl;
+  if (initialClean !== normalizedUrl) enqueue(initialClean);
+  for (const alt of ohouseAlternateUrls(normalizedUrl)) enqueue(alt);
 
   let lastBlockedUrl: string | undefined;
   let lastError: unknown;
   let fetched: { html: string; url: string } | undefined;
 
-  for (const candidateUrl of urlsToTry) {
+  while (queue.length > 0 && tried.size < 4) {
+    const candidateUrl = queue.shift()!;
+    if (tried.has(candidateUrl)) continue;
+    tried.add(candidateUrl);
+
     try {
       const res = await fetchRemoteBuffer(candidateUrl, {
         accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -811,14 +943,21 @@ export async function readProductPage(
         signal,
         followMetaRefresh: true,
       });
+      tried.add(res.url);
       if (res.blocked) {
         lastBlockedUrl = res.url;
+        const cleanResolved = cleanUrlForLookup(res.url).cleanUrl;
+        if (cleanResolved !== res.url) enqueue(cleanResolved);
+        for (const alt of ohouseAlternateUrls(res.url)) enqueue(alt);
         continue;
       }
       const html = decodeCharset(res.body, res.contentType);
       const signals = extractPageSignals(html, res.url);
       if (signals.blocked) {
         lastBlockedUrl = res.url;
+        const cleanResolved = cleanUrlForLookup(res.url).cleanUrl;
+        if (cleanResolved !== res.url) enqueue(cleanResolved);
+        for (const alt of ohouseAlternateUrls(res.url)) enqueue(alt);
         continue;
       }
       fetched = { html, url: res.url };
@@ -835,12 +974,28 @@ export async function readProductPage(
   if (!fetched) {
     if (lastBlockedUrl) {
       if (aiReady) {
-        const aiWeb = await lookupUrlWithGemini(lastBlockedUrl, { signal });
-        if (aiWeb) {
-          return { ...aiWeb, url: lastBlockedUrl, source: 'ai-web', aiConfigured: true };
+        const aiWeb = await lookupUrlWithGeminiWithStatus(lastBlockedUrl, { signal });
+        if (aiWeb.product) {
+          const inferred = inferProductAttributes(
+            `${aiWeb.product.name ?? ''} ${aiWeb.product.notes ?? ''}`,
+            aiWeb.product.category,
+          );
+          return {
+            ...inferred,
+            ...aiWeb.product,
+            url: lastBlockedUrl,
+            source: 'ai-web',
+            aiConfigured: true,
+          };
         }
+        return {
+          url: lastBlockedUrl,
+          blocked: true,
+          aiConfigured: true,
+          ...(aiWeb.error ? { aiError: aiWeb.error } : {}),
+        };
       }
-      return { url: lastBlockedUrl, blocked: true, aiConfigured: aiReady };
+      return { url: lastBlockedUrl, blocked: true, aiConfigured: false };
     }
     throw lastError instanceof Error ? lastError : new Error('page_unavailable');
   }
