@@ -1,9 +1,7 @@
 import {
-  AlertTriangle,
   BedDouble,
   Camera,
   Check,
-  CheckCircle2,
   Columns2,
   CookingPot,
   Copy,
@@ -13,7 +11,6 @@ import {
   EyeOff,
   FolderOpen,
   Footprints,
-  Info,
   Laptop,
   Lock,
   MapPin,
@@ -24,7 +21,7 @@ import {
   Trash2,
   Upload,
   User,
-  XCircle,
+  X,
 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { catLabel } from '../catalog/categories';
@@ -55,6 +52,9 @@ export function LayoutListPanel() {
   const furniture = v.items.filter((i) => !i.locked);
   const builtins = v.items.filter((i) => i.locked);
   const budget = project.budget ?? 0;
+  const total = rep?.total ?? 0;
+  const budgetPct = budget > 0 ? Math.min(100, Math.round((total / budget) * 100)) : 0;
+  const overBudget = budget > 0 && total > budget;
 
   const exportCsv = () => {
     const map = new Map<string, { n: number; id: string }>();
@@ -68,7 +68,7 @@ export function LayoutListPanel() {
       const p = getProduct(id, project)!;
       return [catLabel(p.category), p.name, p.brand, p.dims.w, p.dims.d, p.dims.h, n, p.price ?? '', (p.price ?? 0) * n || '', productSearchUrl(p)];
     });
-    const csv = '﻿' + [head, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+    const csv = '\ufeff' + [head, ...rows].map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
     void download(`${project.name}-${v.name}-구매목록.csv`, csv, 'text/csv');
   };
 
@@ -87,26 +87,26 @@ export function LayoutListPanel() {
           requestCamera('focus', { x: it.x, z: it.z });
         }}
       >
-        <span className="color-dot" style={{ background: Object.values(it.mats ?? p?.mats ?? {})[0]?.color ?? '#ccc' }} />
+        <span className="color-dot" style={{ background: Object.values(it.mats ?? p?.mats ?? {})[0]?.color ?? '#999' }} />
         <div className="placed-info">
           <div className="placed-name">
-            {it.locked && <Lock size={11} className="ic-lock" />}
-            {it.label || p?.name}
+            {it.locked && <Lock size={10} className="ic-lock" />}
+            <span>{it.label || p?.name}</span>
           </div>
           <div className="placed-sub mono">
-            {d ? `${Math.round(d.w)}×${Math.round(d.d)}×H${Math.round(d.h)}` : ''}
+            {d ? `${Math.round(d.w)}×${Math.round(d.d)}` : ''}
             {p?.price && !it.locked ? ` · ${fmtWon(p.price)}` : ''}
-            {it.y > 1 ? ` · 바닥+${Math.round(it.y)}` : ''}
+            {it.y > 1 ? ` · +${Math.round(it.y)}cm` : ''}
           </div>
           {iss && iss.length > 0 && <div className={'placed-warn lvl-' + lvl}>{iss.map((x) => x.msg).join(' · ')}</div>}
         </div>
         <div className="placed-actions" onClick={(e) => e.stopPropagation()}>
-          <button className="icon-xs" title={it.hidden ? '보이기' : '숨기기'} onClick={() => updateItems([it.id], (x) => (x.hidden = !x.hidden))}>
-            {it.hidden ? <EyeOff size={13} /> : <Eye size={13} />}
+          <button className="icon-xs" title={it.hidden ? '보이기' : '숨기기'} aria-label={it.hidden ? '보이기' : '숨기기'} onClick={() => updateItems([it.id], (x) => (x.hidden = !x.hidden))}>
+            {it.hidden ? <EyeOff size={12} /> : <Eye size={12} />}
           </button>
           {!it.locked && (
-            <button className="icon-xs danger" title="삭제" onClick={() => mutateVersion((vv) => (vv.items = vv.items.filter((x) => x.id !== it.id)))}>
-              <Trash2 size={13} />
+            <button className="icon-xs danger" title="삭제" aria-label="삭제" onClick={() => mutateVersion((vv) => (vv.items = vv.items.filter((x) => x.id !== it.id)))}>
+              <Trash2 size={12} />
             </button>
           )}
         </div>
@@ -116,69 +116,80 @@ export function LayoutListPanel() {
 
   return (
     <div className="panel-scroll">
-      <div className="budget-summary-card">
+      <div className="kpi-strip cols-4">
         <div>
-          <span>예상 합계</span>
-          <b className="mono">{fmtWon(rep?.total ?? 0)}</b>
+          <span>합계</span>
+          <b className="mono">{fmtWon(total)}</b>
         </div>
         <div>
-          <span>배치 가구</span>
-          <b className="mono">{furniture.length}개</b>
+          <span>가구</span>
+          <b className="mono">{furniture.length}</b>
         </div>
         <div>
-          <span>바닥 점유</span>
+          <span>점유</span>
           <b className="mono">{(rep?.floorArea ?? 0).toFixed(1)}㎡</b>
         </div>
         <div>
-          <span>겹침·간섭</span>
-          <b className={'mono ' + ((rep?.issues ?? 0) ? 'sc-bad' : 'sc-good')}>{rep?.issues ?? 0}건</b>
+          <span>간섭</span>
+          <b className={'mono ' + ((rep?.issues ?? 0) ? 'sc-bad' : 'sc-good')}>{rep?.issues ?? 0}</b>
         </div>
       </div>
-      <div className="list-group-head">가구 ({furniture.length})</div>
-      <div className="placed-list">{furniture.map((i) => row(i.id))}</div>
-      {!furniture.length && <div className="empty-hint">가구 후보 탭에서 배치하기를 눌러 시작하세요.</div>}
-      <div className="list-group-head" style={{ marginTop: 14 }}>
-        붙박이·고정 ({builtins.length})
-      </div>
-      <div className="placed-list">{builtins.map((i) => row(i.id))}</div>
+
+      <div className="list-group-head">배치 가구 ({furniture.length})</div>
+      <div className="placed-list-hairline">{furniture.map((i) => row(i.id))}</div>
+      {!furniture.length && <div className="empty-hint">카탈로그에서 가구를 배치해 보세요.</div>}
+
+      {builtins.length > 0 && (
+        <>
+          <div className="list-group-head" style={{ marginTop: 14 }}>
+            붙박이 · 고정 ({builtins.length})
+          </div>
+          <div className="placed-list-hairline">{builtins.map((i) => row(i.id))}</div>
+        </>
+      )}
+
       <div className="insp-section">
-        <div className="insp-label">예산</div>
         <div className="inline-field">
-          <span>목표 예산</span>
-          <div style={{ width: 140 }}>
+          <span className="insp-label" style={{ margin: 0 }}>목표 예산</span>
+          <div style={{ width: 132 }}>
             <Num value={budget} unit="원" step={100000} onChange={(b) => mutate((p) => (p.budget = b))} />
           </div>
         </div>
-        {budget > 0 && rep && (
-          <div className={'status-banner ' + (rep.total > budget ? 'lvl-bad' : 'lvl-ok')}>
-            {rep.total > budget ? `${fmtWon(rep.total - budget)} 초과` : `${fmtWon(budget - rep.total)} 남음`}
+        {budget > 0 && (
+          <div className="budget-meter">
+            <div className="budget-bar">
+              <div className={'budget-fill' + (overBudget ? ' bad' : '')} style={{ width: `${budgetPct}%` }} />
+            </div>
+            <div className={'budget-meta mono' + (overBudget ? ' bad' : '')}>
+              <span>{budgetPct}%</span>
+              <span>{overBudget ? `${fmtWon(total - budget)} 초과` : `${fmtWon(budget - total)} 남음`}</span>
+            </div>
           </div>
         )}
-        <button className="btn-secondary full-width" onClick={exportCsv}>
-          <Download size={14} /> 구매 목록 CSV 저장
+        <button className="btn-secondary full-width" style={{ marginTop: 8 }} onClick={exportCsv}>
+          <Download size={13} /> 구매 목록 CSV 내보내기
         </button>
-        <p className="mini-note">가격은 참고용 대략값이에요. 상태가 '이미 있음'인 가구는 합계에서 빠져요.</p>
       </div>
     </div>
   );
 }
 
-// ------------------------------------------------------------------ 사람·동선
+// ------------------------------------------------------------------ 사람·동선 (Architectural Spec Sheet)
 const POSES: { id: Pose; label: string }[] = [
   { id: 'stand', label: '서기' },
   { id: 'walk', label: '걷기' },
   { id: 'sit', label: '앉기' },
   { id: 'lie', label: '눕기' },
-  { id: 'reach', label: '팔 뻗기' },
+  { id: 'reach', label: '팔' },
 ];
 
 const SCENARIOS: [Scenario, string, typeof DoorOpen][] = [
-  ['entry', '현관에서 들어올 때', DoorOpen],
-  ['sofa', '소파에 앉았을 때', Sofa],
-  ['bed', '침대에 누웠을 때', BedDouble],
-  ['desk', '책상에 앉았을 때', Laptop],
-  ['kitchen', '주방에서 요리할 때', CookingPot],
-  ['wardrobe', '옷장에서 옷 꺼낼 때', Shirt],
+  ['entry', '현관 진입', DoorOpen],
+  ['sofa', '소파 착석', Sofa],
+  ['bed', '침대 취침', BedDouble],
+  ['desk', '책상 작업', Laptop],
+  ['kitchen', '주방 조리', CookingPot],
+  ['wardrobe', '옷장 열기', Shirt],
 ];
 
 export function HumanPanel() {
@@ -196,153 +207,129 @@ export function HumanPanel() {
   const a = anthro(prof.height, prof.shoulder);
   const idl = ideals(prof.height, prof.shoulder);
   const av = mainAvatar(project, v);
-  const eyeCm = Math.round(av?.pose === 'sit' ? (av.y || 45) + a.sitEyeH : av?.pose === 'lie' ? (av.y || 42) + 22 : a.eyeH);
   const setHeight = (h: number) => setProfiles((ps) => (ps.find((x) => x.id === prof.id)!.height = h));
   const score = rep?.score ?? 100;
-  const levelOf = (l: string) => (l === 'ok' ? 'good' : l === 'info' ? 'good' : l);
+  const findings = rep?.findings ?? [];
+  const badCnt = findings.filter((f) => f.level === 'bad').length;
+  const warnCnt = findings.filter((f) => f.level === 'warn').length;
+  const okCnt = findings.length - badCnt - warnCnt;
 
   return (
     <div className="panel-scroll">
-      <div className="ergo-score-card">
-        <div className="ergo-score-ring" data-level={score >= 80 ? 'good' : score >= 60 ? 'warn' : 'bad'}>
-          <span className="ergo-score-num">{score}</span>
-          <span className="ergo-score-sub">/ 100</span>
-        </div>
+      <div className="ergo-spec-head">
         <div>
-          <div className="ergo-score-title">
-            실제 사람({prof.height}cm) 사용성 점수
-          </div>
-          <div className="ergo-score-stats">
-            <span>
-              개방 바닥 <b>{Math.round((rep?.usableFloorRatio ?? 1) * 100)}%</b>
-            </span>
-            <span>
-              최소 통로 <b>{rep?.minPassageCm != null ? `${rep.minPassageCm}cm` : '여유'}</b>
-            </span>
+          <div className="insp-eyebrow">동선 · 인체치수 점검</div>
+          <div className="ergo-spec-summary">
+            {badCnt > 0 || warnCnt > 0 ? (
+              <>
+                {badCnt > 0 && <span className="sc-bad">충돌 {badCnt}</span>}
+                {badCnt > 0 && warnCnt > 0 && ' · '}
+                {warnCnt > 0 && <span className="sc-warn">주의 {warnCnt}</span>}
+                {' · '}
+                <span>양호 {okCnt}</span>
+              </>
+            ) : (
+              <span className="sc-good">문제 없음 · 양호 {okCnt}건</span>
+            )}
           </div>
         </div>
+        <span className={'spec-score mono ' + scoreClass(score)} title="배치 사용성 지표">
+          {score}점
+        </span>
       </div>
 
-      <div className="insp-section" style={{ borderTop: 0, marginTop: 0, paddingTop: 0 }}>
-        {view === 'walk' ? (
-          <button className="btn-primary full-width pov-active-btn" onClick={() => setView('3d')}>
-            <Eye size={15} /> 1인칭 시점 종료 → 3D 전체 보기
-          </button>
-        ) : (
-          <button className="btn-primary full-width" onClick={() => setView('walk')}>
-            <Footprints size={15} /> 내 눈높이({Math.round(a.eyeH)}cm)로 1인칭 걸어보기
-          </button>
-        )}
-        <p className="mini-note">
-          1인칭 모드에서 <b>W·A·S·D</b>(또는 화살표)로 걸어 다니고, 마우스를 끌어 둘러보세요. 벽·가구에 부딪혀요.
-        </p>
+      {view === 'walk' ? (
+        <button className="btn-primary full-width pov-active-btn" onClick={() => setView('3d')}>
+          <Eye size={14} /> 1인칭 종료 → 3D 전체
+        </button>
+      ) : (
+        <button className="btn-primary full-width" onClick={() => setView('walk')}>
+          <Footprints size={14} /> 눈높이 {Math.round(a.eyeH)}cm로 1인칭 걷기
+        </button>
+      )}
+
+      <div className="kpi-strip cols-3" style={{ marginTop: 10 }}>
+        <div>
+          <span>최소 통로</span>
+          <b className="mono">{rep?.minPassageCm != null ? `${rep.minPassageCm}cm` : '여유'}</b>
+        </div>
+        <div>
+          <span>개방 바닥</span>
+          <b className="mono">{Math.round((rep?.usableFloorRatio ?? 1) * 100)}%</b>
+        </div>
+        <div>
+          <span>기준 키</span>
+          <b className="mono">{prof.height}cm</b>
+        </div>
       </div>
 
       <div className="insp-section">
         <div className="insp-label-row">
-          <span className="insp-label">
-            <User size={13} /> 3D 사람 아바타
-          </span>
+          <span className="insp-label">기준 인물 ({prof.name})</span>
           <label className="chk-inline">
             <input type="checkbox" checked={show.people && !!av} onChange={(e) => (av ? setShow({ people: e.target.checked }) : updateAvatar({}))} />
-            표시
+            아바타 표시
           </label>
         </div>
-        <div className="insp-label-row" style={{ marginTop: 8 }}>
-          <span className="mini-cap">
-            신장 (키) — {prof.name}
-          </span>
-          <b className="mono">{prof.height} cm</b>
-        </div>
-        <input type="range" min={140} max={200} step={1} value={prof.height} onChange={(e) => setHeight(Number(e.target.value))} style={{ width: '100%', accentColor: 'var(--ink)' }} />
+        <input type="range" min={140} max={200} step={1} value={prof.height} onChange={(e) => setHeight(Number(e.target.value))} />
         <div className="quick-elev-row">
           {[160, 168, 175, 182].map((cm) => (
-            <button key={cm} className={'btn-xs' + (prof.height === cm ? ' on' : '')} onClick={() => setHeight(cm)}>
-              {cm}cm
+            <button key={cm} className={'btn-xs mono' + (prof.height === cm ? ' on' : '')} onClick={() => setHeight(cm)}>
+              {cm}
             </button>
           ))}
         </div>
-        <div className="anthro-grid">
-          <div>
-            <span>눈높이</span>
-            <b>{eyeCm}cm</b>
-          </div>
-          <div>
-            <span>어깨폭</span>
-            <b>{Math.round(a.shoulderW)}cm</b>
-          </div>
-          <div>
-            <span>손 닿는 높이</span>
-            <b>{Math.round(a.reachUp)}cm</b>
-          </div>
-        </div>
-        <div className="insp-label" style={{ marginTop: 10 }}>
-          자세 전환 (3D에서 직접 끌어 옮기기)
-        </div>
-        <div className="seg-grid-5">
+        <div className="seg-grid-5" style={{ marginTop: 8 }}>
           {POSES.map((p) => (
             <button key={p.id} className={'seg-btn' + (av?.pose === p.id ? ' on' : '')} onClick={() => setPose(p.id)}>
               {p.label}
             </button>
           ))}
         </div>
-        <div className="anthro-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)' }}>
+        <div className="kpi-strip cols-4" style={{ marginTop: 8, marginBottom: 0 }}>
           <div>
-            <span>의자 좌판</span>
-            <b>{Math.round(idl.chairSeat)}</b>
+            <span>좌판</span>
+            <b className="mono">{Math.round(idl.chairSeat)}</b>
           </div>
           <div>
             <span>책상</span>
-            <b>{Math.round(idl.deskH)}</b>
+            <b className="mono">{Math.round(idl.deskH)}</b>
           </div>
           <div>
             <span>조리대</span>
-            <b>{Math.round(idl.counterH)}</b>
+            <b className="mono">{Math.round(idl.counterH)}</b>
           </div>
           <div>
-            <span>통로 최소</span>
-            <b>{Math.round(idl.passMin)}</b>
+            <span>통로</span>
+            <b className="mono">{Math.round(idl.passMin)}</b>
           </div>
         </div>
-        <p className="mini-note">키에 맞는 권장 높이(cm) — 아래 진단이 이 값으로 계산돼요.</p>
       </div>
 
       <div className="insp-section">
-        <div className="insp-label">생활 동선 시점 바로가기 (클릭 시 1인칭 이동)</div>
+        <div className="insp-label">생활 시점 바로가기</div>
         <div className="scenario-grid">
           {SCENARIOS.map(([id, label, Icon]) => (
             <button key={id} className="scenario-btn" onClick={() => runScenario(id)}>
-              <Icon size={14} strokeWidth={1.8} /> {label}
+              <Icon size={13} strokeWidth={1.7} /> {label}
             </button>
           ))}
         </div>
       </div>
 
       <div className="insp-section">
-        <div className="insp-label">동선 · 사용 공간 레이어</div>
-        <label className="chk-row">
-          <input type="checkbox" checked={show.heatmap} onChange={(e) => setShow({ heatmap: e.target.checked })} />
-          <span>바닥을 통로 폭으로 색칠 (빨강 = 몸이 못 지나감, 보라 = 현관에서 못 가는 곳)</span>
-        </label>
-        <label className="chk-row">
-          <input type="checkbox" checked={show.clearance} onChange={(e) => setShow({ clearance: e.target.checked })} />
-          <span>문·서랍 열기, 의자 빼기에 필요한 사용 공간</span>
-        </label>
-      </div>
-
-      <div className="insp-section">
-        <div className="insp-label">항목별 사용성 자동 진단</div>
-        <div className="findings-list">
-          {(rep?.findings ?? [])
+        <div className="insp-label">항목별 점검표</div>
+        <div className="spec-findings">
+          {findings
             .slice()
             .sort((x, y) => ({ bad: 0, warn: 1, info: 2, ok: 3 })[x.level] - { bad: 0, warn: 1, info: 2, ok: 3 }[y.level])
             .map((f) => {
               const it = f.itemId ? v.items.find((i) => i.id === f.itemId) : undefined;
-              const st = levelOf(f.level);
+              const tone = f.level === 'bad' ? 'bad' : f.level === 'warn' ? 'warn' : 'good';
               return (
                 <div
                   key={f.id}
-                  className={`finding-card st-${st}${it ? ' clickable' : ''}`}
+                  className={'spec-finding' + (it ? ' clickable' : '')}
                   onClick={() => {
                     if (!it) return;
                     select([it.id]);
@@ -350,15 +337,15 @@ export function HumanPanel() {
                     requestCamera('focus', { x: it.x, z: it.z });
                   }}
                 >
-                  <div className="finding-head">
-                    {st === 'good' && (f.level === 'info' ? <Info size={15} className="ic-good" /> : <CheckCircle2 size={15} className="ic-good" />)}
-                    {st === 'warn' && <AlertTriangle size={15} className="ic-warn" />}
-                    {st === 'bad' && <XCircle size={15} className="ic-bad" />}
-                    <span>{f.group}</span>
-                    {it && <MapPin size={12} className="ic-pin" />}
+                  <span className={'spec-dot ' + tone} />
+                  <div className="spec-finding-body">
+                    <div className="spec-finding-top">
+                      <span className="spec-finding-title">{f.title}</span>
+                      <span className="spec-finding-group">{f.group}</span>
+                    </div>
+                    <div className="spec-finding-detail">{f.detail}</div>
                   </div>
-                  <div className="finding-title">{f.title}</div>
-                  <div className="finding-detail">{f.detail}</div>
+                  {it && <MapPin size={11} className="spec-pin" />}
                 </div>
               );
             })}
@@ -367,13 +354,13 @@ export function HumanPanel() {
 
       <details className="insp-section more">
         <summary>
-          <User size={13} /> 함께 사는 사람 · 반입 조건
+          <User size={12} /> 함께 사는 사람 · 현관 반입 조건
         </summary>
         {project.profiles.map((p) => (
           <div key={p.id} className="row">
             <input type="color" value={p.color} onChange={(e) => setProfiles((ps) => (ps.find((x) => x.id === p.id)!.color = e.target.value))} />
             <input className="inp" style={{ flex: 1 }} value={p.name} onChange={(e) => setProfiles((ps) => (ps.find((x) => x.id === p.id)!.name = e.target.value))} />
-            <div style={{ width: 80 }}>
+            <div style={{ width: 76 }}>
               <Num value={p.height} unit="cm" min={80} max={220} onChange={(h) => setProfiles((ps) => (ps.find((x) => x.id === p.id)!.height = h))} />
             </div>
             <button className={'btn-xs' + (project.activeProfileId === p.id ? ' on' : '')} onClick={() => mutate((d) => (d.activeProfileId = p.id), false)}>
@@ -389,9 +376,8 @@ export function HumanPanel() {
         <button className="btn-xs" onClick={() => setProfiles((ps) => ps.push({ id: uid('p'), name: `사람 ${ps.length + 1}`, height: 160, color: '#7aa7e8' }))}>
           <Plus size={11} /> 사람 추가
         </button>
-        <p className="mini-note">'기준'으로 고른 사람의 키로 점수·진단·1인칭 눈높이를 계산해요.</p>
         <div className="insp-label" style={{ marginTop: 10 }}>
-          현관 반입 조건
+          현관 반입 문틀 치수
         </div>
         <div className="grid2">
           <label className="field">
@@ -403,7 +389,7 @@ export function HumanPanel() {
             <Num value={project.moveIn.entryH} unit="cm" onChange={(x) => mutate((p) => (p.moveIn.entryH = x))} />
           </label>
         </div>
-        {project.moveIn.entryW === 61 && <div className="callout warn">현관문 폭 61cm는 평면도 그림에서 잰 값이에요. 문틀 안쪽 폭을 재서 고쳐 주세요 — 반입 체크가 이 값을 써요.</div>}
+        {project.moveIn.entryW === 61 && <div className="callout warn">문틀 안쪽 실측 폭을 입력하면 반입 체크가 정확해집니다.</div>}
       </details>
     </div>
   );
@@ -413,6 +399,7 @@ export function HumanPanel() {
 /** Drawn plan thumbnail for versions that have no 3D capture yet. */
 export function MiniPlan({ v }: { v: Version }) {
   const project = useStore((s) => s.project)!;
+  const theme = useStore((s) => s.theme);
   const res = resolveItems(project, v);
   const pts = project.plan.rooms.flatMap((r) => r.points).concat(project.plan.walls.flatMap((w) => [w.a, w.b]));
   if (!pts.length) return null;
@@ -422,19 +409,27 @@ export function MiniPlan({ v }: { v: Version }) {
   const y0 = Math.min(...ys) - 10;
   const w = Math.max(...xs) - x0 + 10;
   const h = Math.max(...ys) - y0 + 10;
+  const dark = theme === 'dark';
   return (
-    <svg viewBox={`${x0} ${y0} ${w} ${h}`} style={{ width: '100%', height: '100%', display: 'block', background: '#ebe6de' }} preserveAspectRatio="xMidYMid meet">
+    <svg viewBox={`${x0} ${y0} ${w} ${h}`} style={{ width: '100%', height: '100%', display: 'block', background: dark ? '#1f2126' : '#ece8e0' }} preserveAspectRatio="xMidYMid meet">
       {project.plan.rooms.map((r) => (
-        <polygon key={r.id} points={r.points.map((p) => p.join(',')).join(' ')} fill="#e2cfb0" />
+        <polygon key={r.id} points={r.points.map((p) => p.join(',')).join(' ')} fill={dark ? 'rgba(216,191,152,0.16)' : '#e2d3ba'} />
       ))}
       {res
         .filter((r) => r.prod.mount !== 'ceiling')
         .sort((a, b) => (a.prod.model === 'rug' ? -1 : 0) - (b.prod.model === 'rug' ? -1 : 0))
         .map((r) => (
-          <polygon key={r.it.id} points={r.poly.map((p) => p.join(',')).join(' ')} fill={r.it.locked ? '#d2ccc2' : (Object.values(r.it.mats ?? r.prod.mats ?? {})[0]?.color ?? '#fff')} stroke="#5a544c" strokeWidth={1.2} opacity={r.prod.model === 'rug' ? 0.6 : 1} />
+          <polygon
+            key={r.it.id}
+            points={r.poly.map((p) => p.join(',')).join(' ')}
+            fill={r.it.locked ? (dark ? '#383c44' : '#cfc9be') : (Object.values(r.it.mats ?? r.prod.mats ?? {})[0]?.color ?? (dark ? '#444954' : '#fff'))}
+            stroke={dark ? '#8d9098' : '#5a544c'}
+            strokeWidth={1.2}
+            opacity={r.prod.model === 'rug' ? 0.5 : 1}
+          />
         ))}
       {project.plan.walls.map((wl) => (
-        <line key={wl.id} x1={wl.a[0]} y1={wl.a[1]} x2={wl.b[0]} y2={wl.b[1]} stroke="#2d2a26" strokeWidth={wl.thickness} />
+        <line key={wl.id} x1={wl.a[0]} y1={wl.a[1]} x2={wl.b[0]} y2={wl.b[1]} stroke={dark ? '#dcd8d0' : '#23201c'} strokeWidth={wl.thickness} />
       ))}
     </svg>
   );
@@ -464,6 +459,7 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
   const sync = useStore((s) => s.sync);
   const logout = useStore((s) => s.logout);
   const syncError = useStore((s) => s.syncError);
+  const [showSave, setShowSave] = useState(false);
   const [name, setName] = useState('');
   const [note, setNote] = useState('');
   const [importText, setImportText] = useState('');
@@ -477,28 +473,42 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
     mutateVersion((v) => (v.notes = note.trim()), false);
     setName('');
     setNote('');
-    notify(`'${label}' 버전이 저장되었어요 — 이후 수정은 이 버전에 자동 저장돼요`);
+    setShowSave(false);
+    notify(`'${label}' 버전이 저장되었어요`);
   };
 
   return (
     <div className="panel-scroll">
-      <div className="save-box">
-        <div className="insp-label">현재 3D 배치 저장하기</div>
-        <input type="text" placeholder="버전 이름 (예: 페블 2인소파 + 원형식탁)" value={name} onChange={(e) => setName(e.target.value)} />
-        <input type="text" placeholder="메모 (선택: 장단점, 예산 참고)" value={note} onChange={(e) => setNote(e.target.value)} />
-        <button className="btn-primary full-width" onClick={save}>
-          <Save size={14} /> 새 버전으로 저장 (3D 썸네일 자동 캡처)
+      <div className="ver-top-actions">
+        <button className="btn-primary" style={{ flex: 1 }} onClick={() => setShowSave((x) => !x)}>
+          <Save size={13} /> 새 버전 저장
         </button>
-        <p className="mini-note" style={{ marginTop: 0 }}>
-          지금 열린 버전은 고칠 때마다 자동 저장돼요 ({syncText(sync).short}). 새 버전으로 저장하면 지금 상태가 따로 남아요.
-        </p>
+        {project.versions.length >= 2 && (
+          <button className="btn-secondary" onClick={onCompare} title="버전 2개 나란히 비교">
+            <Columns2 size={13} /> 비교
+          </button>
+        )}
       </div>
-      {project.versions.length >= 2 && (
-        <button className="btn-compare full-width" onClick={onCompare}>
-          <Columns2 size={15} /> 저장된 버전 2개 나란히 비교하기
-        </button>
+
+      {showSave && (
+        <div className="save-box">
+          <input type="text" placeholder="버전 이름 (예: 거실 개방형 안)" value={name} onChange={(e) => setName(e.target.value)} autoFocus onKeyDown={(e) => e.key === 'Enter' && save()} />
+          <input type="text" placeholder="메모 (선택)" value={note} onChange={(e) => setNote(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} />
+          <div className="seg-grid-2">
+            <button className="btn-secondary" onClick={() => setShowSave(false)}>
+              취소
+            </button>
+            <button className="btn-primary" onClick={save}>
+              저장하기
+            </button>
+          </div>
+        </div>
       )}
-      <div className="list-group-head">저장된 배치 버전 ({project.versions.length}개)</div>
+
+      <div className="list-group-head">
+        저장된 버전 ({project.versions.length}) · <span style={{ fontWeight: 400 }}>{syncText(sync).short}</span>
+      </div>
+
       <div className="versions-list">
         {[...project.versions]
           .sort((x, y) => y.updatedAt - x.updatedAt)
@@ -509,7 +519,7 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
               <div key={v.id} className={'version-card' + (isActive ? ' active' : '')}>
                 <div className="version-thumb" onClick={() => setActiveVersion(v.id)}>
                   {v.thumb ? <img src={v.thumb} alt={v.name} /> : <MiniPlan v={v} />}
-                  {isActive && <span className="ver-active-tag">현재 열림</span>}
+                  {isActive && <span className="ver-active-tag">열림</span>}
                 </div>
                 <div className="version-body">
                   <div className="version-title-row">
@@ -518,26 +528,26 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
                     ) : (
                       <b className="version-title">{v.name}</b>
                     )}
-                    <span className="version-date">{fmtDate(v.updatedAt)}</span>
+                    <span className="version-date mono">{fmtDate(v.updatedAt)}</span>
                   </div>
                   {isActive ? (
-                    <textarea className="mood-note-edit" rows={2} placeholder="메모" value={v.notes} onChange={(e) => mutateVersion((vv) => (vv.notes = e.target.value), false)} style={{ margin: '4px 0 6px' }} />
+                    <textarea className="mood-note-edit" rows={1} placeholder="메모" value={v.notes} onChange={(e) => mutateVersion((vv) => (vv.notes = e.target.value), false)} style={{ margin: '4px 0 6px' }} />
                   ) : (
                     v.notes && <p className="version-note">{v.notes}</p>
                   )}
                   <div className="version-metrics mono">
-                    <span>가구 {m.itemCount}개</span>
+                    <span>{m.itemCount}개</span>
                     <span>{fmtWon(m.total)}</span>
-                    <span className={scoreClass(m.score)}>사용성 {m.score}점</span>
+                    <span className={scoreClass(m.score)}>{m.score}점</span>
                   </div>
                   <div className="version-actions">
                     <button className="btn-xs primary" onClick={() => setActiveVersion(v.id)} disabled={isActive}>
-                      <FolderOpen size={11} /> {isActive ? '열려 있음' : '불러오기'}
+                      <FolderOpen size={11} /> {isActive ? '열려 있음' : '열기'}
                     </button>
                     {!isActive && (
                       <button
                         className="btn-xs"
-                        title="지금 화면의 배치로 이 버전 덮어쓰기"
+                        title="현재 배치로 이 버전 덮어쓰기"
                         onClick={() => {
                           mutate((p) => {
                             const t = p.versions.find((x) => x.id === v.id)!;
@@ -565,11 +575,13 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
           })}
       </div>
 
-      <div className="insp-section" style={{ marginTop: 16 }}>
-        <div className="insp-label">내보내기 · 이미지 · 백업</div>
+      <details className="insp-section more">
+        <summary>
+          <Download size={12} /> 내보내기 · 백업 · 초기화
+        </summary>
         <div className="util-btn-grid">
           <button className="btn-secondary" onClick={requestShot}>
-            <Camera size={14} /> 3D PNG 캡처
+            <Camera size={13} /> 3D 캡처
           </button>
           <button
             className="btn-secondary"
@@ -580,17 +592,17 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
               } catch {
                 setShowImport(true);
                 setImportText(layoutCode(active.items));
-                notify('아래 칸의 코드를 직접 복사하세요');
+                notify('아래 칸의 코드를 복사하세요');
               }
             }}
           >
-            <Copy size={14} /> 배치 코드 복사
+            <Copy size={13} /> 배치 코드
           </button>
           <button className="btn-secondary" onClick={async () => void download(`${project.name}-전체백업-${new Date().toISOString().slice(0, 10)}.json`, await exportProject(project), 'application/json')}>
-            <Download size={14} /> 전체 백업 (.json)
+            <Download size={13} /> 백업 저장
           </button>
           <label className="btn-secondary">
-            <Upload size={14} /> 백업 파일 복원
+            <Upload size={13} /> 백업 복원
             <input
               type="file"
               accept=".json,application/json"
@@ -604,7 +616,7 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
                   for (const [id, b] of Object.entries(o.blobs ?? {}) as [string, { data: string }][]) await putBlob(id, dataUrlToBlob(b.data));
                   e.target.value = '';
                   if (list.some((x) => x.id === o.project.id)) {
-                    setPendingRestore(o.project); // same home already here: ask whether to replace it
+                    setPendingRestore(o.project);
                     return;
                   }
                   importProject(o.project);
@@ -616,60 +628,44 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
             />
           </label>
         </div>
-      </div>
-      {pendingRestore && (
-        <div className="callout info" style={{ margin: '8px 0 0' }}>
-          <b>'{list.find((x) => x.id === pendingRestore.id)?.name ?? pendingRestore.name}'</b>이(가) 이미 있어요. 이 파일 내용으로 바꿀까요? 바꾸면 다른 기기에서도 같은 내용이 보여요.
-          <div className="row" style={{ gap: 6, marginTop: 8 }}>
-            <button
-              className="btn-xs primary"
-              onClick={() => {
-                const p = pendingRestore;
-                setPendingRestore(null);
-                void replaceProject(p).then(() => notify('기존 프로젝트를 이 파일 내용으로 바꿨어요'));
-              }}
-            >
-              기존 것 바꾸기
-            </button>
-            <button
-              className="btn-xs"
-              onClick={() => {
-                importProject(pendingRestore);
-                setPendingRestore(null);
-                notify('새 프로젝트로 따로 추가했어요');
-              }}
-            >
-              따로 추가
-            </button>
-            <button className="btn-xs" onClick={() => setPendingRestore(null)}>
-              취소
-            </button>
-          </div>
-        </div>
-      )}
-      {(sync === 'server' || sync === 'server-nostore') && (
-        <div className="insp-section">
-          <div className="insp-label">이 기기</div>
-          <p className="mini-note" style={{ marginTop: 0 }}>
-            {syncText(sync).long}. 모든 기기를 한 번에 로그아웃시키려면 Vercel에서 APP_PASSWORD를 바꾸세요.
-          </p>
-          {syncError && syncError !== 'not_configured' && (
-            <div className="callout bad" style={{ wordBreak: 'break-word' }}>
-              서버 저장소 오류: {syncError}
+
+        {pendingRestore && (
+          <div className="callout info" style={{ marginTop: 8 }}>
+            <b>'{list.find((x) => x.id === pendingRestore.id)?.name ?? pendingRestore.name}'</b>이(가) 이미 있어요. 이 파일로 바꿀까요?
+            <div className="row" style={{ marginTop: 6, marginBottom: 0 }}>
+              <button
+                className="btn-xs primary"
+                onClick={() => {
+                  const p = pendingRestore;
+                  setPendingRestore(null);
+                  void replaceProject(p).then(() => notify('기존 프로젝트를 교체했어요'));
+                }}
+              >
+                기존 교체
+              </button>
+              <button
+                className="btn-xs"
+                onClick={() => {
+                  importProject(pendingRestore);
+                  setPendingRestore(null);
+                  notify('새 프로젝트로 추가했어요');
+                }}
+              >
+                따로 추가
+              </button>
+              <button className="btn-xs" onClick={() => setPendingRestore(null)}>
+                취소
+              </button>
             </div>
-          )}
-          <button className="btn-xs full-width" onClick={() => void logout()}>
-            이 기기에서 로그아웃
-          </button>
-        </div>
-      )}
-      <div className="insp-section">
-        <button className="btn-xs full-width" onClick={() => setShowImport((x) => !x)}>
-          {showImport ? '▲ 배치 코드 붙여넣기 닫기' : '▼ 배치 코드 · 다른 배치 도구 JSON 불러오기'}
+          </div>
+        )}
+
+        <button className="btn-xs full-width" style={{ marginTop: 8 }} onClick={() => setShowImport((x) => !x)}>
+          {showImport ? '배치 코드 입력 닫기' : '배치 코드 · JSON 불러오기'}
         </button>
         {showImport && (
           <div className="import-box">
-            <textarea rows={4} placeholder="배치 코드나 다른 배치 도구에서 내보낸 JSON을 붙여넣으세요…" value={importText} onChange={(e) => setImportText(e.target.value)} />
+            <textarea rows={3} placeholder="배치 코드 또는 JSON 붙여넣기…" value={importText} onChange={(e) => setImportText(e.target.value)} />
             <button
               className="btn-primary full-width"
               onClick={() => {
@@ -679,40 +675,39 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
                   v.items = [...v.items.filter((i) => i.locked), ...items];
                 });
                 setImportText('');
-                notify(`총 ${items.length}개 가구를 3D 공간으로 불러왔어요`);
+                setShowImport(false);
+                notify(`총 ${items.length}개 가구를 불러왔어요`);
               }}
             >
-              3D 공간으로 변환해서 불러오기
+              3D 공간으로 불러오기
             </button>
           </div>
         )}
-      </div>
-      <div className="insp-section">
-        <div className="insp-label">빠른 초기화</div>
-        <div className="util-btn-grid">
-          <button
-            className="btn-danger"
-            onClick={() => {
-              mutateVersion((v) => {
-                v.items = v.items.filter((i) => i.locked);
-              });
-              notify('붙박이만 남기고 가구를 비웠어요 (Cmd+Z로 되돌리기)');
-            }}
-          >
-            <Trash2 size={13} /> 가구 모두 비우기
-          </button>
-        </div>
-      </div>
+
+        <button
+          className="btn-danger full-width"
+          style={{ marginTop: 8 }}
+          onClick={() => {
+            mutateVersion((v) => {
+              v.items = v.items.filter((i) => i.locked);
+            });
+            notify('붙박이만 남기고 가구를 비웠어요 (Cmd+Z로 되돌리기)');
+          }}
+        >
+          <Trash2 size={13} /> 가구 모두 비우기
+        </button>
+      </details>
+
       <details className="insp-section more">
         <summary>
-          <FolderOpen size={13} /> 다른 집 · 프로젝트 ({list.length})
+          <FolderOpen size={12} /> 다른 집 · 프로젝트 ({list.length})
         </summary>
-        <div className="placed-list">
+        <div className="placed-list-hairline">
           {list.map((p) => (
             <div key={p.id} className={'placed-row' + (p.id === project.id ? ' sel' : '')} onClick={() => void switchProject(p.id)}>
               <div className="placed-info">
                 <div className="placed-name">{p.name}</div>
-                <div className="placed-sub">{new Date(p.t).toLocaleDateString('ko-KR')}</div>
+                <div className="placed-sub mono">{new Date(p.t).toLocaleDateString('ko-KR')}</div>
               </div>
               {p.id !== project.id && list.length > 1 && (
                 <span onClick={(e) => e.stopPropagation()}>
@@ -722,18 +717,35 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
             </div>
           ))}
         </div>
-        <div className="save-box" style={{ marginTop: 8 }}>
-          <input type="text" placeholder="새 집 이름 (예: 망원동 투룸)" value={projName} onChange={(e) => setProjName(e.target.value)} />
+        <div className="save-box" style={{ marginTop: 8, marginBottom: 0 }}>
+          <input type="text" placeholder="새 집 이름" value={projName} onChange={(e) => setProjName(e.target.value)} />
           <div className="util-btn-grid">
             <button className="btn-secondary" onClick={() => newProject(projName || '새 집', 'blank')}>
-              빈 방에서 시작
+              빈 방 시작
             </button>
             <button className="btn-secondary" onClick={() => newProject(projName || `${project.name} (사본)`, 'copy')}>
-              지금 집 복사해서 시작
+              현재 집 복사
             </button>
           </div>
         </div>
       </details>
+
+      {(sync === 'server' || sync === 'server-nostore') && (
+        <details className="insp-section more">
+          <summary>이 기기 · 동기화</summary>
+          <p className="mini-note" style={{ marginTop: 0 }}>
+            {syncText(sync).long}
+          </p>
+          {syncError && syncError !== 'not_configured' && (
+            <div className="callout bad" style={{ wordBreak: 'break-word' }}>
+              서버 저장소 오류: {syncError}
+            </div>
+          )}
+          <button className="btn-xs full-width" style={{ marginTop: 6 }} onClick={() => void logout()}>
+            이 기기에서 로그아웃
+          </button>
+        </details>
+      )}
     </div>
   );
 }
@@ -761,7 +773,7 @@ export function CompareModal({ onClose }: { onClose: () => void }) {
             <b className="mono">{fmtWon(m.total)}</b>
           </div>
           <div>
-            <span>사용성 점수</span>
+            <span>사용성</span>
             <b className={'mono ' + scoreClass(m.score)}>{m.score}점</b>
           </div>
           <div>
@@ -777,7 +789,7 @@ export function CompareModal({ onClose }: { onClose: () => void }) {
             <b className="mono">{m.floorArea.toFixed(1)}㎡</b>
           </div>
           <div>
-            <span>겹침·주의</span>
+            <span>겹침 · 주의</span>
             <b className="mono">
               {m.issues} / {m.warn}
             </b>
@@ -815,11 +827,11 @@ export function CompareModal({ onClose }: { onClose: () => void }) {
       <div className="modal-card modal-lg">
         <div className="modal-header">
           <div>
-            <h3>저장된 버전 나란히 비교</h3>
-            <p className="modal-sub">예산·사용성·가구 차이를 한눈에</p>
+            <h3>버전 비교</h3>
+            <p className="modal-sub">예산 · 동선 · 가구 구성 차이</p>
           </div>
-          <button className="icon-btn" onClick={onClose}>
-            ✕
+          <button className="icon-btn" onClick={onClose} aria-label="닫기">
+            <X size={15} />
           </button>
         </div>
         <div className="compare-selectors">
@@ -847,10 +859,14 @@ export function CompareModal({ onClose }: { onClose: () => void }) {
           <div className="compare-diff-box">
             <div className="compare-delta-bar">
               <span>
-                예산 차이 <b className="mono">{fmtWon(Math.abs(mB.total - mA.total))}</b> {mB.total > mA.total ? '(B가 비쌈)' : mB.total < mA.total ? '(A가 비쌈)' : ''}
+                예산 차이 <b className="mono">{fmtWon(Math.abs(mB.total - mA.total))}</b> {mB.total > mA.total ? '(B 높음)' : mB.total < mA.total ? '(A 높음)' : ''}
               </span>
               <span>
-                사용성 <b className="mono">{mB.score - mA.score > 0 ? '+' : ''}{mB.score - mA.score}점</b> (B 기준)
+                사용성{' '}
+                <b className="mono">
+                  {mB.score - mA.score > 0 ? '+' : ''}
+                  {mB.score - mA.score}점
+                </b>
               </span>
             </div>
             <div className="compare-diff-cols">
