@@ -29,14 +29,14 @@ import { productSearchUrl } from '../catalog/products';
 import { computeIssues, resolveItems } from '../lib/analysis';
 import { anthro, ideals } from '../lib/ergonomics';
 import { fmtWon, uid } from '../lib/geometry';
-import { requestCamera } from '../scene/sceneState';
+import { requestCamera, useScene } from '../scene/sceneState';
 import { putBlob } from '../store/persistence';
 import { activeVersion, getProduct, syncText, useStore } from '../store/store';
 import type { Pose, Project, Version } from '../types';
 import { mainAvatar, runScenario, setPose, updateAvatar, type Scenario } from './actions';
 import { exportProject, layoutCode, parseLayoutCode } from './backup';
 import { Confirm, dataUrlToBlob, download, Modal, Num } from './common';
-import { ergoReport, scoreClass, useErgo } from './ergo';
+import { ergoReport, layoutTotals, scoreClass, useErgo, useLayoutTotals } from './ergo';
 
 // ------------------------------------------------------------------ 배치목록
 export function LayoutListPanel() {
@@ -47,12 +47,17 @@ export function LayoutListPanel() {
   const updateItems = useStore((s) => s.updateItems);
   const mutate = useStore((s) => s.mutate);
   const mutateVersion = useStore((s) => s.mutateVersion);
-  const rep = useErgo();
+  const totals = useLayoutTotals();
   const issues = useMemo(() => computeIssues(project, v), [project.plan, v, project.customProducts]);
+  const badIssueCount = useMemo(() => {
+    let n = 0;
+    for (const [, list] of issues) if (list.some((x) => x.level === 'bad')) n++;
+    return n;
+  }, [issues]);
   const furniture = v.items.filter((i) => !i.locked);
   const builtins = v.items.filter((i) => i.locked);
   const budget = project.budget ?? 0;
-  const total = rep?.total ?? 0;
+  const total = totals.total;
   const budgetPct = budget > 0 ? Math.min(100, Math.round((total / budget) * 100)) : 0;
   const overBudget = budget > 0 && total > budget;
 
@@ -127,11 +132,11 @@ export function LayoutListPanel() {
         </div>
         <div>
           <span>점유</span>
-          <b className="mono">{(rep?.floorArea ?? 0).toFixed(1)}㎡</b>
+          <b className="mono">{totals.floorArea.toFixed(1)}㎡</b>
         </div>
         <div>
           <span>간섭</span>
-          <b className={'mono ' + ((rep?.issues ?? 0) ? 'sc-bad' : 'sc-good')}>{rep?.issues ?? 0}</b>
+          <b className={'mono ' + (badIssueCount ? 'sc-bad' : 'sc-good')}>{badIssueCount}</b>
         </div>
       </div>
 
@@ -207,7 +212,11 @@ export function HumanPanel() {
   const a = anthro(prof.height, prof.shoulder);
   const idl = ideals(prof.height, prof.shoulder);
   const av = mainAvatar(project, v);
-  const setHeight = (h: number) => setProfiles((ps) => (ps.find((x) => x.id === prof.id)!.height = h));
+  const setHeight = (h: number, history = true) =>
+    mutate((p) => {
+      const target = p.profiles.find((x) => x.id === prof.id);
+      if (target) target.height = h;
+    }, history);
   const score = rep?.score ?? 100;
   const findings = rep?.findings ?? [];
   const badCnt = findings.filter((f) => f.level === 'bad').length;
@@ -271,7 +280,15 @@ export function HumanPanel() {
             아바타 표시
           </label>
         </div>
-        <input type="range" min={140} max={200} step={1} value={prof.height} onChange={(e) => setHeight(Number(e.target.value))} />
+        <input
+          type="range"
+          min={140}
+          max={200}
+          step={1}
+          value={prof.height}
+          onPointerDown={() => useStore.getState().checkpoint()}
+          onChange={(e) => setHeight(Number(e.target.value), false)}
+        />
         <div className="quick-elev-row">
           {[160, 168, 175, 182].map((cm) => (
             <button key={cm} className={'btn-xs mono' + (prof.height === cm ? ' on' : '')} onClick={() => setHeight(cm)}>
@@ -465,6 +482,7 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
   const [importText, setImportText] = useState('');
   const [showImport, setShowImport] = useState(false);
   const [projName, setProjName] = useState('');
+  const dragging = useScene((s) => s.dragging);
   const active = activeVersion(project)!;
 
   const save = () => {
@@ -484,7 +502,14 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
           <Save size={13} /> 새 버전 저장
         </button>
         {project.versions.length >= 2 && (
-          <button className="btn-secondary" onClick={onCompare} title="버전 2개 나란히 비교">
+          <button
+            className="btn-secondary"
+            onClick={() => {
+              useScene.getState().captureThumb?.();
+              onCompare();
+            }}
+            title="버전 2개 나란히 비교"
+          >
             <Columns2 size={13} /> 비교
           </button>
         )}
@@ -514,7 +539,8 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
           .sort((x, y) => y.updatedAt - x.updatedAt)
           .map((v) => {
             const isActive = v.id === active.id;
-            const m = ergoReport(project, v);
+            const fast = layoutTotals(project, v);
+            const m = isActive && dragging ? null : ergoReport(project, v);
             return (
               <div key={v.id} className={'version-card' + (isActive ? ' active' : '')}>
                 <div className="version-thumb" onClick={() => setActiveVersion(v.id)}>
@@ -536,9 +562,9 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
                     v.notes && <p className="version-note">{v.notes}</p>
                   )}
                   <div className="version-metrics mono">
-                    <span>{m.itemCount}개</span>
-                    <span>{fmtWon(m.total)}</span>
-                    <span className={scoreClass(m.score)}>{m.score}점</span>
+                    <span>{fast.itemCount}개</span>
+                    <span>{fmtWon(fast.total)}</span>
+                    {m && <span className={scoreClass(m.score)}>{m.score}점</span>}
                   </div>
                   <div className="version-actions">
                     <button className="btn-xs primary" onClick={() => setActiveVersion(v.id)} disabled={isActive}>
@@ -549,6 +575,7 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
                         className="btn-xs"
                         title="현재 배치로 이 버전 덮어쓰기"
                         onClick={() => {
+                          useScene.getState().captureThumb?.();
                           mutate((p) => {
                             const t = p.versions.find((x) => x.id === v.id)!;
                             const cur = p.versions.find((x) => x.id === p.activeVersionId)!;
@@ -684,18 +711,22 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
           </div>
         )}
 
-        <button
-          className="btn-danger full-width"
-          style={{ marginTop: 8 }}
-          onClick={() => {
-            mutateVersion((v) => {
-              v.items = v.items.filter((i) => i.locked);
-            });
-            notify('붙박이만 남기고 가구를 비웠어요 (Cmd+Z로 되돌리기)');
-          }}
-        >
-          <Trash2 size={13} /> 가구 모두 비우기
-        </button>
+        <div style={{ marginTop: 8 }}>
+          <Confirm
+            className="btn-danger full-width"
+            label={
+              <>
+                <Trash2 size={13} /> 가구 모두 비우기
+              </>
+            }
+            onConfirm={() => {
+              mutateVersion((v) => {
+                v.items = v.items.filter((i) => i.locked);
+              });
+              notify('붙박이만 남기고 가구를 비웠어요 (Cmd+Z로 되돌리기)');
+            }}
+          />
+        </div>
       </details>
 
       <details className="insp-section more">

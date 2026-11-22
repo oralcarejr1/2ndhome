@@ -49,7 +49,7 @@ import type { PlacedItem, Pose, Product } from './types';
 import { mainAvatar, testWithHuman, updateAvatar } from './ui/actions';
 import { CatalogPanel } from './ui/CatalogPanel';
 import { dataUrlToBlob, download, Modal } from './ui/common';
-import { useErgo } from './ui/ergo';
+import { useLayoutTotals } from './ui/ergo';
 import { Inspector } from './ui/Inspector';
 import { LoginScreen } from './ui/Login';
 import { Moodboard } from './ui/Moodboard';
@@ -139,24 +139,37 @@ function Studio() {
   const v = activeVersion(project)!;
   const furnCount = v.items.filter((i) => !i.locked).length;
 
+  const walkPanelsRef = useRef<{ left: boolean; right: boolean } | null>(null);
+  const prevViewRef = useRef(view);
+
   useEffect(() => {
     if (!toast) return;
     setToastOn(true);
     const t = setTimeout(() => setToastOn(false), 2600);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // Auto-collapse side panels when entering 1st-person walk mode, and restore on exit
   useEffect(() => {
-    if (selection.length) {
-      setSplitMood(false);
-      useStore.setState({ rightOpen: true });
-      if (isMobile) setMtab('right');
+    const prev = prevViewRef.current;
+    prevViewRef.current = view;
+    if (view === 'walk' && prev !== 'walk') {
+      const st = useStore.getState();
+      walkPanelsRef.current = { left: st.leftOpen, right: st.rightOpen };
+      useStore.setState({ leftOpen: false, rightOpen: false });
+      if (isMobile) setMtab('none');
+    } else if (prev === 'walk' && view !== 'walk' && walkPanelsRef.current) {
+      useStore.setState({ leftOpen: walkPanelsRef.current.left, rightOpen: walkPanelsRef.current.right });
+      walkPanelsRef.current = null;
     }
-  }, [selection, isMobile]);
-  useKeys();
+  }, [view, isMobile]);
+
+  useKeys(view === '2d' && editPlan);
 
   const toggleEditPlan = (on: boolean) => {
     setEditPlan(on);
     if (on) {
+      useStore.getState().select([]);
       setSplitMood(false);
       useStore.setState({ rightOpen: true });
     }
@@ -178,6 +191,21 @@ function Studio() {
       if (next) useStore.setState({ rightOpen: true });
       return next;
     });
+  };
+
+  const openInspector = () => {
+    if (isMobile) {
+      setSplitMood(false);
+      useStore.setState({ rightOpen: true });
+      setMtab('right');
+      return;
+    }
+    if (rightOpen && !splitMood) {
+      useStore.setState({ rightOpen: false });
+    } else {
+      setSplitMood(false);
+      useStore.setState({ rightOpen: true });
+    }
   };
 
   return (
@@ -259,7 +287,7 @@ function Studio() {
         )}
 
         {(view === '3d' || view === 'top') && <ViewportHud />}
-        {showSelectionBar && <SelectionBar />}
+        {showSelectionBar && <SelectionBar inspectorOpen={rightOpen && !splitMood} onToggleInspector={openInspector} />}
         {(view === '3d' || view === 'top') && <CameraBar />}
         {view === 'walk' && <PovHud />}
         <PlaceHint />
@@ -326,7 +354,7 @@ function Header({
   const sync = useStore((s) => s.sync);
   const saveState = useStore((s) => s.saveState);
   const st = syncText(sync);
-  const rep = useErgo();
+  const totals = useLayoutTotals();
   const v = activeVersion(project)!;
   const area = project.info?.area ?? project.plan.rooms.reduce((a, r) => a + polyArea(r.points), 0) / 10000;
   const [verOpen, setVerOpen] = useState(false);
@@ -365,7 +393,7 @@ function Header({
         </button>
         <span className="header-meta mono" title={syncLabel}>
           <span className={'sync-pip st-' + saveState} />
-          {area.toFixed(1)}㎡ · {fmtWon(rep?.total ?? 0)}
+          {area.toFixed(1)}㎡ · {fmtWon(totals.total)}
         </span>
 
         {verOpen && (
@@ -534,6 +562,7 @@ function ViewportHud() {
             max={23}
             step={0.5}
             value={f.hour}
+            onPointerDown={() => useStore.getState().checkpoint()}
             onChange={(e) => mutateVersion((vv) => (vv.finishes.hour = +e.target.value), false)}
             style={{ width: '100%', margin: '6px 0 10px' }}
           />
@@ -621,7 +650,7 @@ function swapPosition(it: PlacedItem, from: Product, to: Product) {
   return { x: back[0] + (uz[0] * to.dims.d) / 2, z: back[1] + (uz[1] * to.dims.d) / 2 };
 }
 
-function SelectionBar() {
+function SelectionBar({ inspectorOpen, onToggleInspector }: { inspectorOpen: boolean; onToggleInspector: () => void }) {
   const project = useStore((s) => s.project)!;
   const selection = useStore((s) => s.selection);
   const updateItems = useStore((s) => s.updateItems);
@@ -663,6 +692,9 @@ function SelectionBar() {
           </button>
         ))}
         <span className="pill-sep" />
+        <button className={'sel-bar-btn' + (inspectorOpen ? ' on' : '')} onClick={onToggleInspector} title="속성 패널 열기/닫기">
+          <SlidersHorizontal size={14} />
+        </button>
         <button className="sel-bar-btn danger" onClick={removeSelected} title="아바타 삭제">
           <Trash2 size={14} />
         </button>
@@ -682,6 +714,9 @@ function SelectionBar() {
         </button>
         <button className="sel-bar-btn" onClick={() => updateItems(selection, (x) => (x.locked = !allLocked))} title="고정 전환">
           {allLocked ? <Unlock size={14} /> : <Lock size={14} />} <span>{allLocked ? '고정 해제' : '고정'}</span>
+        </button>
+        <button className={'sel-bar-btn' + (inspectorOpen ? ' on' : '')} onClick={onToggleInspector} title="속성 · 정렬 패널 열기/닫기">
+          <SlidersHorizontal size={14} /> <span>속성</span>
         </button>
         <button className="sel-bar-btn danger" onClick={removeSelected} title="삭제">
           <Trash2 size={14} />
@@ -754,6 +789,9 @@ function SelectionBar() {
         <UserCheck size={14} /> <span>사람</span>
       </button>
       <span className="pill-sep" />
+      <button className={'sel-bar-btn' + (inspectorOpen ? ' on' : '')} onClick={onToggleInspector} title="속성 패널 열기/닫기">
+        <SlidersHorizontal size={14} />
+      </button>
       <button className="sel-bar-btn" onClick={duplicateSelected} title="복제 (Cmd+D)">
         <Copy size={14} />
       </button>
@@ -817,10 +855,10 @@ function CameraBar() {
         시점 <ChevronDown size={11} />
       </button>
       <span className="cam-sep" />
-      <button onClick={() => requestCamera('zoom', { f: 0.8 })} disabled={view === 'top'} title="확대" aria-label="확대">
+      <button onClick={() => requestCamera('zoom', { f: 0.8 })} title="확대" aria-label="확대">
         <Plus size={13} />
       </button>
-      <button onClick={() => requestCamera('zoom', { f: 1.25 })} disabled={view === 'top'} title="축소" aria-label="축소">
+      <button onClick={() => requestCamera('zoom', { f: 1.25 })} title="축소" aria-label="축소">
         <Minus size={13} />
       </button>
       <span className="cam-sep" />
@@ -871,8 +909,9 @@ function PlaceHint() {
       {measure && measures.length > 0 && <button onClick={() => useScene.getState().set({ measures: [] })}>지우기</button>}
       <button
         onClick={() => {
-          useStore.setState({ placing: null, placingPerson: null, measure: false });
-          useScene.getState().set({ ghost: null, guides: [], measureStart: null });
+          useStore.getState().cancelPlacing();
+          useStore.setState({ measure: false });
+          useScene.getState().set({ measureStart: null });
         }}
       >
         취소 (Esc)
@@ -884,12 +923,13 @@ function PlaceHint() {
 function HeatLegend() {
   const on = useStore((s) => s.show.heatmap);
   const view = useStore((s) => s.view);
+  const leftOpen = useStore((s) => s.leftOpen);
   const project = useStore((s) => s.project)!;
   if (!on || !(view === '3d' || view === 'top')) return null;
   const prof = project.profiles.find((p) => p.id === project.activeProfileId) ?? project.profiles[0];
   const id = ideals(prof.height, prof.shoulder);
   return (
-    <div className="stage-legend">
+    <div className={'stage-legend' + (leftOpen ? ' shifted' : '')}>
       <span className="legend-dot" style={{ background: '#e5484d' }} /> 통과 불가 (&lt;{Math.round(id.passMin)}cm)
       <span className="legend-dot" style={{ background: '#f08c00' }} /> 좁음 (&lt;75cm)
       <span className="legend-dot" style={{ background: '#e0b100' }} /> 1인 통행 (&lt;90cm)
@@ -908,32 +948,29 @@ function PovHud() {
   const a = anthro(prof.height, prof.shoulder);
   const set = useScene.getState().set;
   return (
-    <>
-      <div className="walk-cross" />
-      <div className="pov-hud">
-        <div className="pov-hud-title">
-          <Eye size={14} />
-          <span>
-            1인칭 눈높이 · {prof.height}cm ({pose === 'sit' ? '착석' : pose === 'lie' ? '와식' : '보행'} {Math.round(eye ?? a.eyeH)}cm)
-          </span>
-        </div>
-        <div className="pov-hud-sub">WASD / 방향키 이동 · 드래그 둘러보기 · Shift 빠르게</div>
-        <div className="pov-hud-btns">
-          <button className={pose === 'stand' ? 'on' : ''} onClick={() => set({ walkPose: 'stand' })}>
-            서서 걷기
-          </button>
-          <button className={pose === 'sit' ? 'on' : ''} onClick={() => set({ walkPose: 'sit', walkSurface: 45 })}>
-            앉은 눈높이
-          </button>
-          <button className={pose === 'lie' ? 'on' : ''} onClick={() => set({ walkPose: 'lie', walkSurface: 42 })}>
-            누운 눈높이
-          </button>
-          <button className="exit-pov" onClick={() => setView('3d')}>
-            나가기 (Esc)
-          </button>
-        </div>
+    <div className="pov-hud">
+      <div className="pov-hud-title">
+        <Eye size={14} />
+        <span>
+          1인칭 눈높이 · {prof.height}cm ({pose === 'sit' ? '착석' : pose === 'lie' ? '와식' : '보행'} {Math.round(eye ?? a.eyeH)}cm)
+        </span>
       </div>
-    </>
+      <div className="pov-hud-sub">드래그 둘러보기 · 바닥 클릭 이동 · 소파/침대 클릭 앉기·눕기 · WASD</div>
+      <div className="pov-hud-btns">
+        <button className={pose === 'stand' ? 'on' : ''} onClick={() => set({ walkPose: 'stand' })}>
+          서서 걷기
+        </button>
+        <button className={pose === 'sit' ? 'on' : ''} onClick={() => set({ walkPose: 'sit', walkSurface: 45, walkTarget: null })}>
+          앉은 눈높이
+        </button>
+        <button className={pose === 'lie' ? 'on' : ''} onClick={() => set({ walkPose: 'lie', walkSurface: 42, walkTarget: null })}>
+          누운 눈높이
+        </button>
+        <button className="exit-pov" onClick={() => setView('3d')}>
+          나가기 (Esc)
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -964,9 +1001,10 @@ function ShotModal() {
 
 function Help({ onClose }: { onClose: () => void }) {
   const shortcuts: [string, string][] = [
-    ['드래그 / 파란 고리', '가구 이동 · 회전 (벽/모서리 자석 스냅, Alt 해제)'],
-    ['우클릭 / Shift+드래그', '3D 카메라 평행 이동'],
-    ['R / Shift+R', '선택 가구 90° 회전'],
+    ['클릭 → 드래그 / 파란 고리', '가구 선택 후 이동 · 회전 (벽 자동 밀착, Alt 스냅 해제)'],
+    ['미선택 영역 드래그 / 우클릭', '3D 카메라 회전 · 평행 이동'],
+    ['1인칭 바닥·가구 클릭', '바닥으로 걸어가기 · 소파/침대 앉기·눕기'],
+    ['R / Shift+R', '선택·배치 가구 90° 회전'],
     ['Q / E', '선택 가구 15° 미세 회전'],
     ['화살표 / Shift+화살표', '1cm / 10cm 이동'],
     ['PgUp / PgDn', '바닥에서 띄우기 높이 ±5cm'],
@@ -991,7 +1029,10 @@ function Help({ onClose }: { onClose: () => void }) {
 }
 
 // ------------------------------------------------------------------ keyboard
-function useKeys() {
+function useKeys(planEditActive: boolean) {
+  const planEditRef = useRef(planEditActive);
+  planEditRef.current = planEditActive;
+
   useEffect(() => {
     const k = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
@@ -1014,8 +1055,8 @@ function useKeys() {
         if (s.placing || s.placingPerson) s.cancelPlacing();
         else if (s.measure) useStore.setState({ measure: false });
         else if (s.view === 'walk') s.setView('3d');
-        else s.select([]);
-        useScene.getState().set({ ghost: null, guides: [], measureStart: null });
+        else if (!planEditRef.current) s.select([]);
+        useScene.getState().set({ ghost: null, guides: [], measureStart: null, walkTarget: null });
         return;
       }
       if (s.view !== 'walk') {
@@ -1029,9 +1070,10 @@ function useKeys() {
       }
       if (s.placing && (e.key === 'r' || e.key === 'R')) {
         const g = useScene.getState().ghost;
-        if (g) useScene.getState().set({ ghost: { ...g, rot: normDeg(g.rot + (e.shiftKey ? -90 : 90)) } });
+        if (g) useScene.getState().set({ ghost: { ...g, rot: normDeg(g.rot + (e.shiftKey ? 90 : -90)) }, ghostManualRot: true });
         return;
       }
+      if (planEditRef.current) return;
       const sel = s.selection;
       if (!sel.length || s.view === 'walk') return;
       if (e.key === 'Delete' || e.key === 'Backspace') {

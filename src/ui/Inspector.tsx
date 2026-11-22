@@ -186,7 +186,15 @@ function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
             {Math.round(project.plan.ceiling)} cm
           </b>
         </div>
-        <input type="range" min={210} max={300} step={1} value={project.plan.ceiling} onChange={(e) => mutate((p) => (p.plan.ceiling = +e.target.value), false)} />
+        <input
+          type="range"
+          min={210}
+          max={300}
+          step={1}
+          value={project.plan.ceiling}
+          onPointerDown={() => useStore.getState().checkpoint()}
+          onChange={(e) => mutate((p) => (p.plan.ceiling = +e.target.value), false)}
+        />
       </div>
 
       {(doors.length > 0 || wardrobe) && (
@@ -588,6 +596,7 @@ function ItemInspector({ it }: { it: PlacedItem }) {
                 step={1}
                 disabled={it.locked}
                 value={Math.round(it.y)}
+                onPointerDown={() => useStore.getState().checkpoint()}
                 onChange={(e) => up((x) => (x.y = +e.target.value), false)}
                 style={{ marginTop: 4 }}
               />

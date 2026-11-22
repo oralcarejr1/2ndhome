@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { ALL_BUILTIN, defaultElev, defaultMount } from '../catalog/products';
 import { blankProject, sampleProject } from '../catalog/seed';
 import { localToWorld, uid } from '../lib/geometry';
+import { useScene } from '../scene/sceneState';
 import type { AppMode, PersonProfile, PlacedItem, PlacedPerson, Pose, Product, Project, Version, ViewMode } from '../types';
 import { merge3, sameContent } from './merge';
 import {
@@ -192,7 +193,7 @@ export const useStore = create<State>((set, get) => {
   const persist = (quiet = false) => {
     if (!quiet) editPending = true;
     if (saveTimer) clearTimeout(saveTimer);
-    set({ saveState: 'saving' });
+    if (get().saveState !== 'saving') set({ saveState: 'saving' });
     saveTimer = setTimeout(() => void saveNow(), 700);
   };
   /** Write pending changes of the open project now (before switching projects). */
@@ -632,8 +633,14 @@ export const useStore = create<State>((set, get) => {
         set({ selection: [...s], panel: 'inspect' });
       } else set({ selection: ids, panel: ids.length ? 'inspect' : get().panel });
     },
-    startPlacing: (productId, extra) => set({ placing: { productId, ...extra }, placingPerson: null, measure: false, mode: 'layout' }),
-    cancelPlacing: () => set({ placing: null, placingPerson: null }),
+    startPlacing: (productId, extra) => {
+      useScene.getState().set({ ghostManualRot: false, ghost: null, guides: [] });
+      set({ placing: { productId, ...extra }, placingPerson: null, measure: false, mode: 'layout' });
+    },
+    cancelPlacing: () => {
+      useScene.getState().set({ ghostManualRot: false, ghost: null, guides: [] });
+      set({ placing: null, placingPerson: null });
+    },
     addItem: (productId, x, z, extra = {}) => {
       const p = get().project;
       const prod = getProduct(productId, p);
@@ -703,12 +710,14 @@ export const useStore = create<State>((set, get) => {
       set({ selection: [id], placingPerson: null, panel: 'inspect' });
     },
     setActiveVersion: (id) => {
+      if (get().project?.activeVersionId !== id) useScene.getState().captureThumb?.();
       get().mutate((p) => {
         p.activeVersionId = id;
       }, false);
       set({ selection: [], past: [], future: [] });
     },
     newVersion: (name, fromId) => {
+      useScene.getState().captureThumb?.();
       const p = get().project;
       if (!p) return;
       const blank = fromId === '__none__';

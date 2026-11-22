@@ -29,6 +29,11 @@ export function Moodboard({ compact = false }: { compact?: boolean }) {
   const refs = project.moodboard;
   const v = activeVersion(project)!;
   const selItem = v.items.find((i) => i.id === selection[0]);
+  const selProd = selItem ? getProduct(selItem.productId, project) : undefined;
+  useEffect(() => {
+    if (!compact) return;
+    setTarget(selItem ? 'item' : 'wall');
+  }, [compact, selItem?.id]);
   const shown = refs
     .filter((r) => zone === 'all' || (zone === 'fav' ? r.favorite : zoneOf(r) === zone))
     .sort((a, b) => (b.favorite ? 1 : 0) - (a.favorite ? 1 : 0) || b.createdAt - a.createdAt);
@@ -232,8 +237,8 @@ export function Moodboard({ compact = false }: { compact?: boolean }) {
           <button className={'btn-xs' + (target === 'wall' ? ' on' : '')} onClick={() => setTarget('wall')}>
             벽지
           </button>
-          <button className={'btn-xs' + (target === 'item' ? ' on' : '')} onClick={() => setTarget('item')} disabled={!selItem}>
-            선택 가구
+          <button className={'btn-xs' + (target === 'item' ? ' on' : '')} onClick={() => setTarget('item')} disabled={!selItem} title={selItem ? selItem.label || selProd?.name : '가구를 선택하세요'}>
+            {selItem ? (selItem.label || selProd?.name || '선택 가구').slice(0, 10) : '선택 가구'}
           </button>
         </div>
       </div>

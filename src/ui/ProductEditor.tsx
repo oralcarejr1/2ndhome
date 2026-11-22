@@ -131,7 +131,7 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
     setAiUsed(false);
     setImportedOptions([]);
     setActiveOptionIdx(null);
-    setNeedsDimensionCheck(true);
+    setNeedsDimensionCheck(false);
     setDimensionChecked(false);
     if (importRequest.url) setP((x) => ({ ...x, url: importRequest.url }));
 
@@ -147,12 +147,12 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
         if (controller.signal.aborted) return;
 
         if (!response.ok) {
+          setShowFallback(true);
+          setNeedsDimensionCheck(true);
           if (body?.error === 'ai_required') {
-            setShowFallback(true);
-            setImportNote('캡처 이미지 분석은 서버에 AI 키(GEMINI_API_KEY 등)를 연결해야 사용할 수 있어요. 페이지 텍스트를 복사해 붙여넣으면 AI 없이도 분석돼요.');
+            setImportNote('이미지 치수 자동 읽기가 아직 연결되지 않았어요. 상품 페이지 텍스트를 복사해 아래에 붙여넣으면 바로 분석할 수 있어요.');
           } else {
-            setShowFallback(true);
-            setImportNote('판매처에서 자동으로 페이지를 읽지 못했어요. 링크는 입력했으니 아래에 페이지 내용을 붙여넣거나 치수를 직접 입력해 저장할 수 있어요.');
+            setImportNote('판매처에서 자동으로 페이지를 읽지 못했어요. 아래에 페이지 텍스트나 사이즈표 캡처를 붙여넣거나 치수를 직접 입력해 저장하세요.');
           }
           return;
         }
@@ -160,34 +160,11 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
         const data = body as ImportedProduct;
         if (data.blocked) {
           setShowFallback(true);
-          if (!data.aiConfigured) {
-            setImportNote(
-              '이 판매처는 자동 접근을 막고 있어요. 아래에 페이지 텍스트를 복사해 붙여넣거나, Vercel에 AI 키(GEMINI_API_KEY)를 연결하면 사이즈표 캡처·웹 조회도 가능해요.',
-            );
-          } else if (data.aiError === 'auth') {
-            setImportNote(
-              '판매처가 자동 접근을 막고 있고, Gemini API 키 인증에 실패했어요. Vercel의 GEMINI_API_KEY를 확인하거나 상품·사이즈표 캡처를 이 창에서 Ctrl+V 해보세요.',
-            );
-          } else if (data.aiError === 'quota') {
-            setImportNote(
-              '판매처가 자동 접근을 막고 있고, Gemini API 요청 한도에 도달했어요. 잠시 후 다시 시도하거나 아래에 상품 텍스트를 붙여넣어 불러와 보세요.',
-            );
-          } else if (data.aiError === 'model') {
-            setImportNote(
-              '판매처가 자동 접근을 막고 있고, 설정된 Gemini 모델 호출에 실패했어요(GEMINI_MODEL 확인). 아래에 상품 텍스트를 붙여넣어 불러와 보세요.',
-            );
-          } else if (data.aiError === 'tools_unavailable') {
-            setImportNote(
-              '이 판매처는 자동 접근을 막고 있어요(무료 Gemini 키는 Google 검색 대체 조회가 제한돼요). 상품 페이지 내용을 복사해 아래에 붙여넣거나, 상품·사이즈표 캡처를 이 창 아무 곳에서나 Ctrl+V 해보세요.',
-            );
-          } else if (data.aiError === 'timeout') {
-            setImportNote(
-              '판매처 응답 또는 AI 조회 시간이 초과되었어요. 다시 시도하거나 상품 페이지 텍스트·사이즈표 캡처를 이 창에서 바로 Ctrl+V 해보세요.',
-            );
+          setNeedsDimensionCheck(true);
+          if (data.aiError === 'timeout') {
+            setImportNote('판매처 응답 시간이 초과되었어요. 다시 시도하거나 페이지 텍스트·사이즈표 캡처를 이 창에 붙여넣어(Ctrl+V) 보세요.');
           } else {
-            setImportNote(
-              '이 판매처는 자동 접근을 막고 있어요. 링크는 저장했으니 아래에 상품 페이지 텍스트를 붙여넣거나, 상품·사이즈표 캡처를 이 창 아무 곳에서나 Ctrl+V 해보세요.',
-            );
+            setImportNote('이 판매처는 자동 접근이 막혀 있어요. 상품 페이지 텍스트를 아래에 붙여넣거나 사이즈표 캡처를 이 창에 Ctrl+V 해보세요.');
           }
           return;
         }
@@ -262,6 +239,8 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
           !hasAllDims && '치수',
         ].filter(Boolean);
 
+        // Only require manual dimension confirmation when some axis is missing or estimated
+        setNeedsDimensionCheck(!hasAllDims);
         if (!hasAllDims) setShowFallback(true);
 
         const aiTag = usedAi ? ' (AI 분석 포함)' : '';
@@ -272,11 +251,9 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
             : '';
           const dimTip =
             estTip +
-            (!hasAllDims && data.aiConfigured === false
-              ? ' 치수가 상세 이미지 안에만 있다면 아래에 텍스트를 붙여넣거나, 서버에 AI 키(GEMINI_API_KEY)를 연결하면 이미지 치수까지 자동으로 읽어요.'
-              : !hasAllDims
-                ? ' 치수가 상세 이미지에 있다면 사이즈표 영역을 캡처해 아래에 붙여넣어(Ctrl+V) 보세요.'
-                : '');
+            (!hasAllDims
+              ? ' 치수가 상세 이미지에 있다면 사이즈표 영역을 캡처해 이 창에 붙여넣어(Ctrl+V) 보세요.'
+              : '');
           setImportNote(`불러왔어요${aiTag}. ${missing.join('·')} 정보는 직접 확인해 주세요.${dimTip}`);
         } else {
           setImportNote(`상품 정보를 모두 불러왔어요${aiTag}. 선택한 옵션의 치수와 가격이 맞는지 확인해 주세요.`);
@@ -284,6 +261,7 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
       } catch {
         if (!controller.signal.aborted) {
           setShowFallback(true);
+          setNeedsDimensionCheck(true);
           setImportNote('판매처에서 정보를 읽지 못했어요. 아래에 페이지 텍스트나 사이즈표 캡처를 붙여넣거나 직접 입력해 저장할 수 있어요.');
         }
       } finally {
@@ -409,8 +387,12 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
         if (!draft.shortlist.includes(p.id)) draft.shortlist.push(p.id);
       }, false);
     }
-    notify(editing ? '제품을 수정했어요' : '내 제품으로 저장했어요 — 카탈로그 "직접 등록"에 있어요');
-    if (place) startPlacing(p.id);
+    notify(editing ? '제품을 수정했어요' : '내 제품으로 저장했어요 — 카탈로그 "내가 추가"에 있어요');
+    if (place) {
+      const st = useStore.getState();
+      if (st.view === 'mood' || st.view === 'walk') st.setView('3d');
+      startPlacing(p.id);
+    }
     onClose();
   };
 

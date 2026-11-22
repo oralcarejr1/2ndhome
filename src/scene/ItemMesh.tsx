@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import * as THREE from 'three';
 import { getMaterial } from '../lib/materials';
 import { fitModel, loadRaw } from '../lib/modelLoader';
@@ -62,14 +62,28 @@ interface Props {
 }
 
 /** Model only (cm units, local origin = footprint centre on the floor). */
-export function ItemModel({ item, prod, ghost, imageRef }: Props) {
-  const imageUrl = useImageUrl(imageRef);
-  const key = JSON.stringify([prod.id, prod.model, prod.dims, prod.params, prod.mats, item?.dims, item?.params, item?.mats, ghost, imageUrl]);
-  const obj = useMemo(() => (prod.asset ? null : buildProcedural(prod, item, { ghost, imageUrl })), [key]);
-  useEffect(() => () => (obj ? disposeObject(obj) : undefined), [obj]);
-  if (prod.asset) return <AssetModel prod={prod} item={item} />;
-  return obj ? <primitive object={obj} /> : null;
-}
+export const ItemModel = memo(
+  function ItemModel({ item, prod, ghost, imageRef }: Props) {
+    const imageUrl = useImageUrl(imageRef);
+    const key = useMemo(
+      () => JSON.stringify([prod.id, prod.model, prod.dims, prod.params, prod.mats, item?.dims, item?.params, item?.mats, ghost, imageUrl]),
+      [prod.id, prod.model, prod.dims, prod.params, prod.mats, item?.dims, item?.params, item?.mats, ghost, imageUrl],
+    );
+    const obj = useMemo(() => (prod.asset ? null : buildProcedural(prod, item, { ghost, imageUrl })), [key]);
+    useEffect(() => () => (obj ? disposeObject(obj) : undefined), [obj]);
+    if (prod.asset) return <AssetModel prod={prod} item={item} />;
+    return obj ? <primitive object={obj} /> : null;
+  },
+  (prev, next) =>
+    prev.prod === next.prod &&
+    prev.ghost === next.ghost &&
+    prev.item?.dims === next.item?.dims &&
+    prev.item?.params === next.item?.params &&
+    prev.item?.mats === next.item?.mats &&
+    prev.imageRef?.id === next.imageRef?.id &&
+    prev.imageRef?.blobId === next.imageRef?.blobId &&
+    prev.imageRef?.url === next.imageRef?.url,
+);
 
 export function OutlineBox({ w, d, h, color, y0 = 0, pad = 1.5 }: { w: number; d: number; h: number; color: string; y0?: number; pad?: number }) {
   const geo = useMemo(() => new THREE.EdgesGeometry(new THREE.BoxGeometry(w + pad * 2, h + pad, d + pad * 2)), [w, d, h, pad]);
