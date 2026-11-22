@@ -15,12 +15,15 @@ import {
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { doorSwingPoly, resolveItems } from '../lib/analysis';
-import { add, bboxOf, closestOnSeg, dist, mul, norm, polyArea, polyCentroid, pyeong, snap, sub, uid, wallPoly } from '../lib/geometry';
+import { defaultElev } from '../catalog/products';
+import { computeIssues, doorSwingPoly, resolveItems, type Issue } from '../lib/analysis';
+import { add, bboxOf, closestOnSeg, dist, localToWorld, mul, norm, normDeg, polyArea, polyCentroid, pyeong, rad2deg, snap, sub, uid, wallPoly } from '../lib/geometry';
 import { mirrorProject, type MirrorAxis } from '../lib/mirror';
+import { effectiveItemDims, snapFloorItem, type SnapGuide } from '../lib/snap';
 import { useImageUrl } from '../scene/ItemMesh';
+import { useScene } from '../scene/sceneState';
 import { compressImage, storeImage } from '../store/persistence';
-import { activeVersion, useStore } from '../store/store';
+import { activeVersion, getProduct, useStore } from '../store/store';
 import type { Opening, OpeningType, Vec2, Wall } from '../types';
 import { Confirm, Field, Num } from './common';
 
@@ -60,6 +63,8 @@ const PLAN_PALETTE = {
     swingFill: 'rgba(232, 168, 56, 0.10)',
     accent: '#4d8dff',
     accentSoft: 'rgba(77, 141, 255, 0.14)',
+    bad: '#f06464',
+    warn: '#e8a838',
     person: '#e8a838',
     personFill: 'rgba(232, 168, 56, 0.18)',
     handleFill: '#181a1e',
@@ -87,6 +92,8 @@ const PLAN_PALETTE = {
     swingFill: 'rgba(180, 83, 9, 0.07)',
     accent: '#1d57c4',
     accentSoft: 'rgba(29, 87, 196, 0.10)',
+    bad: '#c83232',
+    warn: '#b45309',
     person: '#b45309',
     personFill: 'rgba(180, 83, 9, 0.14)',
     handleFill: '#ffffff',
@@ -106,6 +113,10 @@ export function PlanEditor({
   const theme = useStore((s) => s.theme);
   const mutate = useStore((s) => s.mutate);
   const notify = useStore((s) => s.notify);
+  const placing = useStore((s) => s.placing);
+  const placingPerson = useStore((s) => s.placingPerson);
+  const showCollisions = useStore((s) => s.show.collisions);
+  const ghost = useScene((s) => s.ghost);
   const P = PLAN_PALETTE[theme];
 
   const flipHome = (axis: MirrorAxis) => {
@@ -117,6 +128,7 @@ export function PlanEditor({
     void useStore.getState().syncNow();
     notify(`집 전체를 반전했어요 — 모든 배치안 포함, Cmd+Z로 되돌리기${plan.underlay ? ' · 도면 이미지는 그대로예요' : ''}`);
   };
+
   const plan = project.plan;
   const v = activeVersion(project)!;
   const svgRef = useRef<SVGSVGElement>(null);
@@ -131,14 +143,55 @@ export function PlanEditor({
   const [calib, setCalib] = useState<Vec2[]>([]);
   const [calibLen, setCalibLen] = useState(300);
   const [roomWalls, setRoomWalls] = useState(plan.walls.length === 0);
+  const [guides2d, setGuides2d] = useState<SnapGuide[]>([]);
+  const [rotReadout, setRotReadout] = useState<{ x: number; z: number; rot: number } | null>(null);
   const underUrl = useImageUrl(plan.underlay ? { id: 'u', kind: 'image', blobId: plan.underlay.blobId, title: '', note: '', tags: [], createdAt: 0 } : undefined);
+  const [underSize, setUnderSize] = useState<{ w: number; h: number } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  // Load underlay natural dimensions once per URL (never construct new Image inside render ref)
+  useEffect(() => {
+    if (!underUrl) {
+      setUnderSize(null);
+      return;
+    }
+    let alive = true;
+    const img = new Image();
+    img.onload = () => {
+      if (alive) setUnderSize({ w: img.naturalWidth || img.width, h: img.naturalHeight || img.height });
+    };
+    img.src = underUrl;
+    return () => {
+      alive = false;
+    };
+  }, [underUrl]);
 
   const bounds = useMemo(() => {
     const pts = plan.walls.flatMap((w) => [w.a, w.b]).concat(plan.rooms.flatMap((r) => r.points));
     return pts.length ? bboxOf(pts) : { minX: 0, minY: 0, maxX: 600, maxY: 450 };
   }, [project.id]);
-  const [vb, setVb] = useState(() => ({ x: bounds.minX - 80, y: bounds.minY - 80, w: bounds.maxX - bounds.minX + 160, h: bounds.maxY - bounds.minY + 160 }));
+
+  const [vb, setVb] = useState(() => {
+    const saved = useScene.getState().planVb[project.id];
+    return saved ?? { x: bounds.minX - 80, y: bounds.minY - 80, w: bounds.maxX - bounds.minX + 160, h: bounds.maxY - bounds.minY + 160 };
+  });
+
+  // Restore saved viewbox when switching project
+  useEffect(() => {
+    const saved = useScene.getState().planVb[project.id];
+    setVb(saved ?? { x: bounds.minX - 80, y: bounds.minY - 80, w: bounds.maxX - bounds.minX + 160, h: bounds.maxY - bounds.minY + 160 });
+  }, [project.id]);
+
+  // Persist 2D zoom/pan across 2D ↔ 3D switches
+  const vbRef = useRef(vb);
+  vbRef.current = vb;
+  useEffect(() => {
+    return () => {
+      const prev = useScene.getState().planVb;
+      useScene.getState().set({ planVb: { ...prev, [project.id]: vbRef.current } });
+    };
+  }, [project.id]);
+
   const [size, setSize] = useState({ w: 800, h: 600 });
   useEffect(() => {
     const el = svgRef.current;
@@ -158,8 +211,7 @@ export function PlanEditor({
   };
 
   const snapPt = (p: Vec2, from?: Vec2, ortho = true): Vec2 => {
-    for (const w of plan.walls)
-      for (const q of [w.a, w.b]) if (dist(p, q) < 10 * px) return [...q] as Vec2;
+    for (const w of plan.walls) for (const q of [w.a, w.b]) if (dist(p, q) < 10 * px) return [...q] as Vec2;
     for (const r of plan.rooms) for (const q of r.points) if (dist(p, q) < 10 * px) return [...q] as Vec2;
     let out: Vec2 = [snap(p[0], grid), snap(p[1], grid)];
     if (from && ortho) {
@@ -176,15 +228,53 @@ export function PlanEditor({
   const onDown = (e: React.PointerEvent) => {
     (e.target as Element).setPointerCapture?.(e.pointerId);
     const p = toPlan(e);
+    const st = useStore.getState();
+
+    // 2D Ghost Placement click
+    if (!editing && e.button === 0 && (st.placing || st.placingPerson)) {
+      const g = useScene.getState().ghost;
+      if (st.placing) {
+        const prod = getProduct(st.placing.productId, project);
+        if (prod) {
+          const x = g?.x ?? p[0];
+          const z = g?.z ?? p[1];
+          const rot = g?.rot ?? 0;
+          const y = g?.y ?? defaultElev(prod, plan.ceiling);
+          st.addItem(st.placing.productId, x, z, { rot, y, dims: st.placing.dims, params: st.placing.params });
+          if (!e.shiftKey) {
+            st.cancelPlacing();
+            setGuides2d([]);
+          }
+        }
+      } else if (st.placingPerson) {
+        st.addPerson(st.placingPerson, g?.x ?? p[0], g?.z ?? p[1]);
+        useScene.getState().set({ ghost: null });
+      }
+      return;
+    }
+
     const t = (e.target as Element).closest('[data-k]') as HTMLElement | null;
+
+    // 2D Furniture Rotation Handle
+    if (tool === 'furn' && t?.dataset.k === 'frot' && e.button === 0) {
+      const id = t.dataset.id!;
+      const it = v.items.find((i) => i.id === id);
+      if (it && !it.locked) {
+        const startAng = rad2deg(Math.atan2(p[0] - it.x, p[1] - it.z));
+        drag.current = { kind: 'frot', id, start: p, orig: { rot: it.rot, startAng, x: it.x, z: it.z }, moved: false };
+      }
+      return;
+    }
+
     if (tool === 'furn' && t?.dataset.k === 'furn' && e.button === 0) {
       const id = t.dataset.id!;
-      const st = useStore.getState();
+      const it = v.items.find((i) => i.id === id);
+      const groupIds = it?.groupId && !e.shiftKey ? v.items.filter((i) => i.groupId === it.groupId).map((i) => i.id) : [id];
       if (e.shiftKey) st.select([id], true);
-      else if (!st.selection.includes(id)) st.select([id]);
-      const ids = (useStore.getState().selection.includes(id) ? useStore.getState().selection : [id]).filter((x) => !v.items.find((i) => i.id === x)?.locked);
-      const orig = new Map(ids.map((x) => [x, { ...(v.items.find((i) => i.id === x) ?? { x: 0, z: 0 }) }]));
-      drag.current = { kind: 'furn', start: p, orig, moved: false };
+      else if (!st.selection.includes(id)) st.select(groupIds);
+      const ids = (useStore.getState().selection.includes(id) ? useStore.getState().selection : groupIds).filter((x) => !v.items.find((i) => i.id === x)?.locked);
+      const orig = new Map(ids.map((x) => [x, { ...(v.items.find((i) => i.id === x) ?? { x: 0, z: 0, rot: 0 }) }]));
+      drag.current = { kind: 'furn', id, start: p, orig, moved: false };
       return;
     }
     if (tool === 'pan' || e.button === 1 || ((tool === 'select' || tool === 'furn') && !t)) {
@@ -260,6 +350,29 @@ export function PlanEditor({
 
   const onMove = (e: React.PointerEvent) => {
     const p = toPlan(e);
+    const st = useStore.getState();
+
+    // Update 2D ghost footprint while placing
+    if (!editing && (st.placing || st.placingPerson)) {
+      if (st.placing) {
+        const prod = getProduct(st.placing.productId, project);
+        if (prod) {
+          const dims = st.placing.dims ?? prod.dims;
+          const prevRot = useScene.getState().ghost?.rot ?? 0;
+          const manual = useScene.getState().ghostManualRot;
+          const others = v.items.filter((i) => !i.hidden);
+          const sn = e.altKey
+            ? { x: p[0], z: p[1], rot: prevRot, guides: [] }
+            : snapFloorItem(project, dims, p[0], p[1], prevRot, others, st.snap, { autoOrient: manual ? 'none' : 'faceRoom' });
+          useScene.getState().set({ ghost: { x: sn.x, z: sn.z, y: defaultElev(prod, plan.ceiling), rot: sn.rot, valid: true } });
+          setGuides2d(sn.guides);
+        }
+      } else {
+        useScene.getState().set({ ghost: { x: p[0], z: p[1], y: 0, rot: 0, valid: true } });
+      }
+      return;
+    }
+
     if (tool === 'wall' || tool === 'room') setHover(snapPt(p, draft[draft.length - 1], !e.altKey));
     else setHover(p);
     const d = drag.current;
@@ -271,16 +384,64 @@ export function PlanEditor({
       return;
     }
     if (!d.moved) {
-      if (dist(p, d.start) < 3 * px) return;
+      if (dist(p, d.start) < 4 * px) return;
       d.moved = true;
       useStore.getState().checkpoint();
+      useScene.getState().set({ dragging: true });
+    }
+    if (d.kind === 'frot') {
+      const o = d.orig as { rot: number; startAng: number; x: number; z: number };
+      const ang = rad2deg(Math.atan2(p[0] - o.x, p[1] - o.z));
+      let rot = o.rot + (ang - o.startAng);
+      if (!e.shiftKey && st.snap.angle > 0) rot = snap(rot, st.snap.angle);
+      const normR = normDeg(rot);
+      st.updateItems([d.id!], (it) => (it.rot = normR), false);
+      setRotReadout({ x: o.x, z: o.z, rot: normR });
+      return;
     }
     if (d.kind === 'furn') {
-      const o = d.orig as Map<string, { x: number; z: number }>;
+      const o = d.orig as Map<string, { x: number; z: number; rot: number }>;
+      const keys = [...o.keys()];
+      if (keys.length === 1 && d.id && o.has(d.id)) {
+        const q0 = o.get(d.id)!;
+        const rawX = q0.x + (p[0] - d.start[0]);
+        const rawZ = q0.z + (p[1] - d.start[1]);
+        const item = v.items.find((i) => i.id === d.id);
+        const prod = item ? getProduct(item.productId, project) : null;
+        if (item && prod && !e.altKey) {
+          const dims = effectiveItemDims(item, prod);
+          const others = v.items.filter((i) => i.id !== d.id && !i.hidden);
+          const sn = snapFloorItem(project, dims, rawX, rawZ, q0.rot, others, st.snap, { autoOrient: 'nearest90' });
+          setGuides2d(sn.guides);
+          st.updateItems(
+            [d.id],
+            (it) => {
+              it.x = sn.x;
+              it.z = sn.z;
+              it.rot = sn.rot;
+            },
+            false,
+          );
+          return;
+        }
+        setGuides2d([]);
+        const fx = e.altKey ? rawX : snap(rawX, st.snap.grid || 1);
+        const fz = e.altKey ? rawZ : snap(rawZ, st.snap.grid || 1);
+        st.updateItems(
+          [d.id],
+          (it) => {
+            it.x = fx;
+            it.z = fz;
+          },
+          false,
+        );
+        return;
+      }
+      setGuides2d([]);
       const fx = snap(p[0] - d.start[0], e.altKey ? 0 : 1);
       const fz = snap(p[1] - d.start[1], e.altKey ? 0 : 1);
-      useStore.getState().updateItems(
-        [...o.keys()],
+      st.updateItems(
+        keys,
         (it) => {
           const q = o.get(it.id);
           if (!q) return;
@@ -331,8 +492,12 @@ export function PlanEditor({
       }, false);
     }
   };
+
   const onUp = () => {
+    if (drag.current?.moved) useScene.getState().set({ dragging: false });
     drag.current = null;
+    setGuides2d([]);
+    setRotReadout(null);
   };
 
   const finishWall = () => {
@@ -377,17 +542,22 @@ export function PlanEditor({
     const k = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input,textarea,select')) return;
       if (e.key === 'Escape') {
+        if (!editing) {
+          // Stay in furniture mode when editing === false (fixes 2D drag breakage on Esc)
+          setGuides2d([]);
+          return;
+        }
         if (tool === 'wall') finishWall();
         else if (tool === 'room') finishRoom();
         setDraft([]);
         setCalib([]);
         setTool('select');
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && editing) {
         if (tool === 'wall') finishWall();
         if (tool === 'room') finishRoom();
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && sel) {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && editing && sel) {
         e.preventDefault();
         del();
       }
@@ -417,10 +587,31 @@ export function PlanEditor({
   };
 
   const furniture = useMemo(() => (showFurn ? resolveItems(project, v) : []), [showFurn, project, v]);
+  const issues = useMemo(() => (showCollisions ? computeIssues(project, v) : new Map<string, Issue[]>()), [showCollisions, project.plan, v, project.customProducts]);
   const selWall = sel?.kind === 'wall' ? plan.walls.find((w) => w.id === sel.id) : null;
   const selOpen = sel?.kind === 'opening' ? plan.openings.find((o) => o.id === sel.id) : null;
   const selRoom = sel?.kind === 'room' ? plan.rooms.find((r) => r.id === sel.id) : null;
   const fs = 12 * px;
+
+  // Single selected unlocked furniture for 2D rotation handle
+  const singleSelFurn = useMemo(() => {
+    if (editing || selection.length !== 1) return null;
+    const r = furniture.find((x) => x.it.id === selection[0]);
+    return r && !r.it.locked ? r : null;
+  }, [editing, selection, furniture]);
+
+  // 2D ghost footprint while placing
+  const ghostProd = placing ? getProduct(placing.productId, project) : null;
+  const ghostPoly = useMemo(() => {
+    if (editing || !placing || !ghostProd || !ghost) return null;
+    const d = placing.dims ?? ghostProd.dims;
+    return [
+      localToWorld(ghost.x, ghost.z, ghost.rot, -d.w / 2, -d.d / 2),
+      localToWorld(ghost.x, ghost.z, ghost.rot, d.w / 2, -d.d / 2),
+      localToWorld(ghost.x, ghost.z, ghost.rot, d.w / 2, d.d / 2),
+      localToWorld(ghost.x, ghost.z, ghost.rot, -d.w / 2, d.d / 2),
+    ];
+  }, [editing, placing, ghostProd, ghost]);
 
   const uploadUnderlay = async (f: File) => {
     const small = await compressImage(f, 2400, 0.9);
@@ -638,6 +829,7 @@ export function PlanEditor({
             max={1}
             step={0.05}
             value={plan.underlay.opacity}
+            onPointerDown={() => useStore.getState().checkpoint()}
             onChange={(e) => mutate((p) => (p.plan.underlay!.opacity = +e.target.value), false)}
             style={{ marginTop: 4 }}
           />
@@ -657,69 +849,71 @@ export function PlanEditor({
   return (
     <>
       <div className="plan-stage">
-        <div className="plan-tools">
-          <div className="tool-group">
-            <button className={!editing ? 'on' : ''} onClick={() => onToggleEdit(false)} title="가구를 끌어 옮기기">
-              <MousePointer2 size={13} /> 가구 배치
-            </button>
-            <button className={editing ? 'on' : ''} onClick={() => onToggleEdit(true)} title="벽·문·창·방 수정">
-              <Spline size={13} /> 도면 편집
-            </button>
-          </div>
-          {editing && (
+        <div className="plan-tools-wrap">
+          <div className="plan-tools">
             <div className="tool-group">
-              {(
-                [
-                  ['select', <MousePointer2 key="s" size={13} />, '선택'],
-                  ['pan', <Hand key="p" size={13} />, '이동'],
-                  ['wall', <Spline key="w" size={13} />, '벽'],
-                  ['room', <Square key="r" size={13} />, '방'],
-                  ['door', <DoorOpen key="d" size={13} />, '문'],
-                  ['window', <Columns2 key="wi" size={13} />, '창'],
-                ] as [Tool, JSX.Element, string][]
-              ).map(([t, ic, l]) => (
-                <button
-                  key={t}
-                  className={tool === t ? 'on' : ''}
-                  onClick={() => {
-                    setTool(t);
-                    setDraft([]);
-                  }}
-                  title={l}
-                >
-                  {ic} {l}
-                </button>
-              ))}
-              <button onClick={() => fileRef.current?.click()} title="평면도 이미지를 깔고 따라 그리기">
-                <ImageIcon size={13} /> 도면 이미지
+              <button className={!editing ? 'on' : ''} onClick={() => onToggleEdit(false)} title="가구를 끌어 옮기기">
+                <MousePointer2 size={13} /> 가구 배치
               </button>
-              {plan.underlay && (
-                <button
-                  className={tool === 'calib' ? 'on' : ''}
-                  onClick={() => {
-                    setTool('calib');
-                    setCalib([]);
-                  }}
-                >
-                  <Ruler size={13} /> 축척
+              <button className={editing ? 'on' : ''} onClick={() => onToggleEdit(true)} title="벽·문·창·방 수정">
+                <Spline size={13} /> 도면 편집
+              </button>
+            </div>
+            {editing && (
+              <div className="tool-group">
+                {(
+                  [
+                    ['select', <MousePointer2 key="s" size={13} />, '선택'],
+                    ['pan', <Hand key="p" size={13} />, '이동'],
+                    ['wall', <Spline key="w" size={13} />, '벽'],
+                    ['room', <Square key="r" size={13} />, '방'],
+                    ['door', <DoorOpen key="d" size={13} />, '문'],
+                    ['window', <Columns2 key="wi" size={13} />, '창'],
+                  ] as [Tool, JSX.Element, string][]
+                ).map(([t, ic, l]) => (
+                  <button
+                    key={t}
+                    className={tool === t ? 'on' : ''}
+                    onClick={() => {
+                      setTool(t);
+                      setDraft([]);
+                    }}
+                    title={l}
+                  >
+                    {ic} {l}
+                  </button>
+                ))}
+                <button onClick={() => fileRef.current?.click()} title="평면도 이미지를 깔고 따라 그리기">
+                  <ImageIcon size={13} /> 도면 이미지
                 </button>
-              )}
-              <label title="방(바닥)을 그릴 때 둘레에 벽도 함께 만들기">
-                <input type="checkbox" checked={roomWalls} onChange={(e) => setRoomWalls(e.target.checked)} />
-                방+벽
+                {plan.underlay && (
+                  <button
+                    className={tool === 'calib' ? 'on' : ''}
+                    onClick={() => {
+                      setTool('calib');
+                      setCalib([]);
+                    }}
+                  >
+                    <Ruler size={13} /> 축척
+                  </button>
+                )}
+                <label title="방(바닥)을 그릴 때 둘레에 벽도 함께 만들기">
+                  <input type="checkbox" checked={roomWalls} onChange={(e) => setRoomWalls(e.target.checked)} />
+                  방+벽
+                </label>
+              </div>
+            )}
+            <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && uploadUnderlay(e.target.files[0])} />
+            <div className="tool-group">
+              <label>
+                <input type="checkbox" checked={showFurn} onChange={(e) => setShowFurn(e.target.checked)} />
+                가구
               </label>
             </div>
-          )}
-          <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => e.target.files?.[0] && uploadUnderlay(e.target.files[0])} />
-          <div className="tool-group">
-            <label>
-              <input type="checkbox" checked={showFurn} onChange={(e) => setShowFurn(e.target.checked)} />
-              가구
-            </label>
           </div>
-        </div>
 
-        {activeToolHint && <div className="place-hint">{activeToolHint}</div>}
+          {activeToolHint && <div className="plan-inline-hint">{activeToolHint}</div>}
+        </div>
 
         <svg
           ref={svgRef}
@@ -732,7 +926,9 @@ export function PlanEditor({
             if (tool === 'room') finishRoom();
           }}
           onWheel={onWheel}
-          style={{ cursor: tool === 'pan' ? 'grab' : tool === 'select' || tool === 'furn' ? 'default' : 'crosshair' }}
+          style={{
+            cursor: !editing && (placing || placingPerson) ? 'crosshair' : tool === 'pan' ? 'grab' : tool === 'select' || tool === 'furn' ? 'default' : 'crosshair',
+          }}
         >
           <defs>
             <pattern id="g" width={grid * 10} height={grid * 10} patternUnits="userSpaceOnUse">
@@ -740,27 +936,17 @@ export function PlanEditor({
             </pattern>
           </defs>
           <rect x={vb.x - 5000} y={vby - 5000} width={vb.w + 10000} height={vbh + 10000} fill="url(#g)" />
-          {plan.underlay && underUrl && (
+          {plan.underlay && underUrl && underSize && (
             <image
               data-k={tool === 'select' ? 'under' : undefined}
               href={underUrl}
               x={plan.underlay.x}
               y={plan.underlay.y}
+              width={underSize.w * plan.underlay.scale}
+              height={underSize.h * plan.underlay.scale}
               opacity={plan.underlay.opacity}
               style={{ cursor: 'move' }}
-              transform="scale(1)"
-              width={undefined}
               preserveAspectRatio="none"
-              ref={(el) => {
-                if (el && plan.underlay) {
-                  const img = new Image();
-                  img.onload = () => {
-                    el.setAttribute('width', String(img.width * plan.underlay!.scale));
-                    el.setAttribute('height', String(img.height * plan.underlay!.scale));
-                  };
-                  img.src = underUrl;
-                }
-              }}
             />
           )}
           {plan.rooms.map((r) => {
@@ -790,9 +976,13 @@ export function PlanEditor({
             .sort((a, b) => (a.prod.model === 'rug' ? -1 : 0) - (b.prod.model === 'rug' ? -1 : 0) || a.y0 - b.y0)
             .map((r) => {
               const on = selection.includes(r.it.id);
+              const iss = issues.get(r.it.id);
+              const bad = !!iss?.some((x) => x.level === 'bad');
+              const warn = !bad && !!iss?.length;
               const c = polyCentroid(r.poly);
               const big = r.w * r.d > 2200 && r.prod.mount !== 'ceiling';
               const fill = r.prod.model === 'rug' ? P.furnRug : r.it.locked ? P.furnLocked : P.furnFill;
+              const stroke = on ? P.accent : bad ? P.bad : warn ? P.warn : P.furnStroke;
               return (
                 <g key={r.it.id}>
                   <polygon
@@ -800,8 +990,8 @@ export function PlanEditor({
                     data-id={r.it.id}
                     points={r.poly.map((q) => q.join(',')).join(' ')}
                     fill={fill}
-                    stroke={on ? P.accent : P.furnStroke}
-                    strokeWidth={(on ? 2.2 : 1) * px}
+                    stroke={stroke}
+                    strokeWidth={(on || bad ? 2.2 : 1) * px}
                     strokeDasharray={r.prod.mount === 'ceiling' || r.y0 > 120 ? `${4 * px} ${3 * px}` : undefined}
                     style={{ pointerEvents: tool === 'furn' ? 'auto' : 'none', cursor: tool === 'furn' && !r.it.locked ? 'grab' : undefined }}
                   />
@@ -828,6 +1018,89 @@ export function PlanEditor({
                 </g>
               );
             })}
+
+          {/* 2D Rotation handle for single selected unlocked item */}
+          {singleSelFurn &&
+            (() => {
+              const it = singleSelFurn.it;
+              const stemBase = localToWorld(it.x, it.z, it.rot, 0, singleSelFurn.d / 2);
+              const handlePt = localToWorld(it.x, it.z, it.rot, 0, singleSelFurn.d / 2 + Math.max(18, 22 * px));
+              return (
+                <g>
+                  <line x1={stemBase[0]} y1={stemBase[1]} x2={handlePt[0]} y2={handlePt[1]} stroke={P.accent} strokeWidth={1.6 * px} style={{ pointerEvents: 'none' }} />
+                  <circle
+                    data-k="frot"
+                    data-id={it.id}
+                    cx={handlePt[0]}
+                    cy={handlePt[1]}
+                    r={6.5 * px}
+                    fill={P.accent}
+                    stroke={P.handleFill}
+                    strokeWidth={2 * px}
+                    style={{ cursor: 'grab' }}
+                  />
+                  {rotReadout && (
+                    <text
+                      x={handlePt[0]}
+                      y={handlePt[1] - 13 * px}
+                      fontSize={fs * 0.9}
+                      fontWeight={700}
+                      textAnchor="middle"
+                      fill={P.accent}
+                      paintOrder="stroke"
+                      stroke={P.wallHalo}
+                      strokeWidth={3.5 * px}
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {Math.round(rotReadout.rot)}°
+                    </text>
+                  )}
+                </g>
+              );
+            })()}
+
+          {/* 2D Ghost preview while placing */}
+          {ghostPoly && ghost && ghostProd && (
+            <g style={{ pointerEvents: 'none' }}>
+              <polygon
+                points={ghostPoly.map((q) => q.join(',')).join(' ')}
+                fill={P.accentSoft}
+                stroke={P.accent}
+                strokeWidth={2 * px}
+                strokeDasharray={`${5 * px} ${3 * px}`}
+              />
+              <text
+                x={ghost.x}
+                y={ghost.z}
+                fontSize={fs * 0.85}
+                fontWeight={600}
+                textAnchor="middle"
+                dominantBaseline="central"
+                fill={P.accent}
+                paintOrder="stroke"
+                stroke={P.wallHalo}
+                strokeWidth={3 * px}
+              >
+                {ghostProd.name.slice(0, 12)}
+              </text>
+            </g>
+          )}
+
+          {/* 2D Wall-flush & alignment snap guides */}
+          {guides2d.map((g, i) => (
+            <line
+              key={'sg' + i}
+              x1={g.a[0]}
+              y1={g.a[1]}
+              x2={g.b[0]}
+              y2={g.b[1]}
+              stroke={g.kind === 'wall' ? P.accent : P.bad}
+              strokeWidth={(g.kind === 'wall' ? 2.2 : 1.4) * px}
+              strokeDasharray={g.kind === 'wall' ? undefined : `${5 * px} ${3 * px}`}
+              style={{ pointerEvents: 'none' }}
+            />
+          ))}
+
           {showFurn &&
             v.people.map((h) => (
               <g key={h.id} style={{ pointerEvents: 'none' }}>

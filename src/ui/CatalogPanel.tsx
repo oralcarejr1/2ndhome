@@ -7,7 +7,7 @@ import { extractProductUrl } from '../lib/productImport';
 import { getThumb } from '../lib/thumbs';
 import { useStore } from '../store/store';
 import type { CategoryId, Product } from '../types';
-import { placeNow } from './actions';
+import { beginPlace } from './actions';
 
 export function Thumb({ p, size }: { p: Product; size?: number }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -260,9 +260,15 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
       <div className="catalog-grid">
         {list.map((p) => {
           const starred = shortlist.includes(p.id);
+          const isPlacing = placing?.productId === p.id;
           const fullTitle = `${p.name} (${p.dims.w}×${p.dims.d}×H${p.dims.h}cm)${p.notes ? `\n${p.notes}` : ''}`;
           return (
-            <div key={p.id} className={'catalog-tile' + (placing?.productId === p.id ? ' placing' : '')} title={fullTitle}>
+            <div
+              key={p.id}
+              className={'catalog-tile' + (isPlacing ? ' placing' : '')}
+              title={fullTitle}
+              onClick={() => beginPlace(p.id)}
+            >
               <div className="catalog-tile-stage">
                 <Thumb p={p} />
                 <div className="tile-top-left">
@@ -273,15 +279,25 @@ export function CatalogPanel({ onCustom }: { onCustom: (base?: Product, importUr
                   title={starred ? '후보에서 빼기' : '후보에 담기'}
                   aria-label={`${p.name} ${starred ? '후보에서 빼기' : '후보에 담기'}`}
                   aria-pressed={starred}
-                  onClick={() => toggleStar(p.id)}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleStar(p.id);
+                  }}
                 >
                   <Star size={13} fill={starred ? 'currentColor' : 'none'} />
                 </button>
                 <div className="tile-overlay">
-                  <button className="tile-place-btn" onClick={() => placeNow(p.id)} title="배치하기">
-                    <Plus size={12} /> 배치
+                  <button
+                    className="tile-place-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      beginPlace(p.id);
+                    }}
+                    title={isPlacing ? '배치 취소' : '배치하기 (클릭 후 원하는 위치에 놓기)'}
+                  >
+                    <Plus size={12} /> {isPlacing ? '배치 중' : '배치'}
                   </button>
-                  <div className="tile-mini-acts">
+                  <div className="tile-mini-acts" onClick={(e) => e.stopPropagation()}>
                     <a className="tile-mini-btn" href={productSearchUrl(p)} target="_blank" rel="noreferrer" title="판매처 보기" aria-label="판매처 보기">
                       <ExternalLink size={11} />
                     </a>

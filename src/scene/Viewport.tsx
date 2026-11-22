@@ -1,17 +1,18 @@
 import { Html, Line, OrbitControls, OrthographicCamera, PerspectiveCamera } from '@react-three/drei';
 import { Canvas, ThreeEvent, useFrame, useThree } from '@react-three/fiber';
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { defaultElev, defaultMount } from '../catalog/products';
 import { clearanceRects, computeHeatmap, computeIssues, nearestWall, resolveItems, sideGaps } from '../lib/analysis';
 import { anthro } from '../lib/ergonomics';
-import { bboxOf, deg2rad, itemAxes, localToWorld, normDeg, pointInPoly, rad2deg, snap as snapTo } from '../lib/geometry';
+import { bboxOf, deg2rad, localToWorld, normDeg, pointInPoly, rad2deg, snap as snapTo } from '../lib/geometry';
 import { setLampGlow } from '../lib/materials';
-import { buildPerson } from '../models/person';
+import { effectiveItemDims, snapFloorItem } from '../lib/snap';
 import { resolveParams } from '../models';
+import { buildPerson } from '../models/person';
 import { activeVersion, getProduct, useStore } from '../store/store';
-import type { PlacedItem, PlacedPerson, Product, Project, Vec2, Version } from '../types';
+import type { PlacedItem, PlacedPerson, Product, Project, RefItem, Vec2, Version } from '../types';
 import { Footprint, ItemModel, OutlineBox } from './ItemMesh';
 import { Room3D } from './Room3D';
 import { useScene } from './sceneState';
@@ -24,11 +25,12 @@ function planBounds(p: Project) {
   return pts.length ? bboxOf(pts) : { minX: 0, minY: 0, maxX: 500, maxY: 400 };
 }
 
-function itemDimsOf(it: PlacedItem, prod: Product) {
-  const d = it.dims ?? prod.dims;
-  let h = d.h;
-  if (prod.model === 'table' && (it.params?.base ?? prod.params?.base) === 'standing') h = Number(it.params?.curH ?? prod.params?.curH ?? h);
-  return { w: d.w, d: d.d, h };
+function effectiveMount(item: PlacedItem, prod: Product, ceiling: number): 'floor' | 'wall' | 'ceiling' | 'surface' {
+  const dims = effectiveItemDims(item, prod);
+  if (prod.mount === 'ceiling' || item.y + dims.h >= ceiling - 3) return 'ceiling';
+  if (prod.mount === 'wall') return 'wall';
+  if (prod.mount === 'surface') return 'surface';
+  return 'floor';
 }
 
 // ------------------------------------------------------------------ lights & environment
@@ -127,42 +129,114 @@ function Lights({ project, version }: { project: Project; version: Version }) {
 // ------------------------------------------------------------------ cameras & controls
 function Cameras({ project }: { project: Project }) {
   const view = useStore((s) => s.view);
-  const b = planBounds(project);
+  const { size } = useThree();
+  const b = useMemo(() => planBounds(project), [project.id, project.plan.rooms.length, project.plan.walls.length]);
   const cx = ((b.minX + b.maxX) / 2) * S;
   const cz = ((b.minY + b.maxY) / 2) * S;
   const span = Math.max(b.maxX - b.minX, b.maxY - b.minY) * S;
-  const dragging = useScene((s) => s.dragging);
-  const { size } = useThree();
   const zoom = Math.min(size.width / (span * 1.15), size.height / ((b.maxY - b.minY) * S * 1.4 + 0.5));
   const far = Math.max(1, (0.9 * size.height) / Math.max(1, size.width));
+
+  const initPersp = useMemo(() => {
+    const saved = useScene.getState().camSaved[project.id];
+    return {
+      pos: (saved?.pos ?? [cx + span * 0.35 * far, (span * 0.95 + 1.5) * far, cz + span * 0.95 * far]) as [number, number, number],
+      target: (saved?.target ?? [cx, 0.6, cz]) as [number, number, number],
+    };
+    // Only compute initial camera when project or entering 3d view changes
+  }, [project.id, view === '3d']);
+
+  const initTopPos = useMemo(() => [cx, 20, cz] as [number, number, number], [project.id, view === 'top']);
+  const initTopTarget = useMemo(() => [cx, 0, cz] as [number, number, number], [project.id, view === 'top']);
+
   if (view === 'walk') return <WalkCamera key="walk" project={project} />;
   if (view === 'top')
     return (
       <>
-        <OrthographicCamera key="ortho" makeDefault position={[cx, 20, cz]} zoom={zoom} near={0.1} far={100} up={[0, 0, -1]} />
-        <TopControls key="topctl" target={[cx, 0, cz]} dragging={dragging} />
+        <OrthographicCamera key={`ortho-${project.id}`} makeDefault position={initTopPos} zoom={zoom} near={0.1} far={100} up={[0, 0, -1]} />
+        <TopControls key={`topctl-${project.id}`} initialTarget={initTopTarget} />
       </>
     );
   return (
     <>
-      <PerspectiveCamera key="persp" makeDefault position={[cx + span * 0.35 * far, (span * 0.95 + 1.5) * far, cz + span * 0.95 * far]} fov={45} near={0.05} far={200} />
-      <PerspControls key="perspctl" target={[cx, 0.6, cz]} dragging={dragging} />
+      <PerspectiveCamera key={`persp-${project.id}`} makeDefault position={initPersp.pos} fov={45} near={0.05} far={200} />
+      <PerspControls key={`perspctl-${project.id}`} projectId={project.id} initialTarget={initPersp.target} />
     </>
   );
 }
 
-function TopControls({ target, dragging }: { target: [number, number, number]; dragging: boolean }) {
+function TopControls({ initialTarget }: { initialTarget: [number, number, number] }) {
   const cam = useThree((s) => s.camera);
+  const dragging = useScene((s) => s.dragging);
+  const ctrlRef = useRef<{ target: THREE.Vector3; update: () => void } | null>(null);
+  useEffect(() => {
+    if (ctrlRef.current) {
+      ctrlRef.current.target.set(initialTarget[0], initialTarget[1], initialTarget[2]);
+      ctrlRef.current.update();
+    }
+  }, [initialTarget]);
   if (!(cam as THREE.OrthographicCamera).isOrthographicCamera) return null;
   return (
-    <OrbitControls makeDefault target={target} enableRotate={false} enabled={!dragging} screenSpacePanning mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }} touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN }} />
+    <OrbitControls
+      ref={ctrlRef as never}
+      makeDefault
+      enableRotate={false}
+      enabled={!dragging}
+      screenSpacePanning
+      mouseButtons={{ LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.PAN }}
+      touches={{ ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_PAN }}
+    />
   );
 }
 
-function PerspControls({ target, dragging }: { target: [number, number, number]; dragging: boolean }) {
+function PerspControls({ projectId, initialTarget }: { projectId: string; initialTarget: [number, number, number] }) {
   const cam = useThree((s) => s.camera);
+  const dragging = useScene((s) => s.dragging);
+  const ctrlRef = useRef<{ target: THREE.Vector3; update: () => void } | null>(null);
+  const lastRef = useRef<{ pos: [number, number, number]; target: [number, number, number] } | null>(null);
+
+  useEffect(() => {
+    if (ctrlRef.current) {
+      ctrlRef.current.target.set(initialTarget[0], initialTarget[1], initialTarget[2]);
+      ctrlRef.current.update();
+    }
+  }, [initialTarget]);
+
+  const snapshot = () => {
+    const c = ctrlRef.current;
+    if (!c || !(cam as THREE.PerspectiveCamera).isPerspectiveCamera || (cam as THREE.PerspectiveCamera).fov === 70) return;
+    lastRef.current = {
+      pos: [cam.position.x, cam.position.y, cam.position.z],
+      target: [c.target.x, c.target.y, c.target.z],
+    };
+  };
+
+  const commitSave = () => {
+    snapshot();
+    if (!lastRef.current) return;
+    const prev = useScene.getState().camSaved;
+    useScene.getState().set({
+      camSaved: { ...prev, [projectId]: lastRef.current },
+    });
+  };
+
+  useEffect(() => () => commitSave(), [projectId]);
+
   if (!(cam as THREE.PerspectiveCamera).isPerspectiveCamera || (cam as THREE.PerspectiveCamera).fov === 70) return null;
-  return <OrbitControls makeDefault target={target} enabled={!dragging} maxPolarAngle={Math.PI / 2 - 0.03} minDistance={0.8} maxDistance={40} enableDamping dampingFactor={0.12} />;
+  return (
+    <OrbitControls
+      ref={ctrlRef as never}
+      makeDefault
+      enabled={!dragging}
+      maxPolarAngle={Math.PI / 2 - 0.03}
+      minDistance={0.8}
+      maxDistance={40}
+      enableDamping
+      dampingFactor={0.12}
+      onChange={snapshot}
+      onEnd={commitSave}
+    />
+  );
 }
 
 function WalkCamera({ project }: { project: Project }) {
@@ -170,10 +244,14 @@ function WalkCamera({ project }: { project: Project }) {
   const a = anthro(profile?.height ?? 170);
   const camRef = useRef<THREE.PerspectiveCamera>(null);
   const keys = useRef<Record<string, boolean>>({});
-  const st = useRef({ yaw: 0, pitch: -0.05, x: 0, z: 0, inited: false, sit: false });
-  const { gl } = useThree();
+  const st = useRef({ yaw: 0, pitch: -0.05, x: 0, z: 0, inited: false, sit: false, stuckTime: 0 });
+  const { gl, scene } = useThree();
   const setScene = useScene((s) => s.set);
   const version = activeVersion(project)!;
+  const versionRef = useRef(version);
+  versionRef.current = version;
+  const projectRef = useRef(project);
+  projectRef.current = project;
 
   useEffect(() => {
     // start near the entry door, looking into the home
@@ -204,45 +282,127 @@ function WalkCamera({ project }: { project: Project }) {
       }
     }
     const saved = useScene.getState().walkPos;
-    st.current = { ...st.current, x: saved?.x ?? x, z: saved?.z ?? z, yaw: saved?.yaw ?? yaw, inited: true };
+    st.current = { ...st.current, x: saved?.x ?? x, z: saved?.z ?? z, yaw: saved?.yaw ?? yaw, inited: true, stuckTime: 0 };
+    return () => setScene({ walkTarget: null });
   }, [project.id]);
 
   useEffect(
     () =>
-      useScene.subscribe((st, prev) => {
-        if (st.walkPos && st.walkPos !== prev.walkPos && (st.walkPos as { tele?: boolean }).tele) {
-          stRef.current.x = st.walkPos.x;
-          stRef.current.z = st.walkPos.z;
-          stRef.current.yaw = st.walkPos.yaw;
+      useScene.subscribe((s, prev) => {
+        if (s.walkPos && s.walkPos !== prev.walkPos && s.walkPos.tele) {
+          st.current.x = s.walkPos.x;
+          st.current.z = s.walkPos.z;
+          st.current.yaw = s.walkPos.yaw;
+          setScene({ walkTarget: null });
         }
       }),
     [],
   );
-  const stRef = st;
 
   useEffect(() => {
+    const ray = new THREE.Raycaster();
+    const ndc = new THREE.Vector2();
     const down = (e: KeyboardEvent) => {
       if ((e.target as HTMLElement)?.closest('input,textarea,select')) return;
       keys.current[e.code] = true;
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) {
+        setScene({ walkTarget: null });
+      }
       if (e.code === 'KeyC') st.current.sit = !st.current.sit;
     };
     const up = (e: KeyboardEvent) => (keys.current[e.code] = false);
-    let dragging = false;
+    let pointerActive = false;
+    let movedDrag = false;
+    let sx = 0;
+    let sy = 0;
     let lx = 0;
     let ly = 0;
     const pd = (e: PointerEvent) => {
-      dragging = true;
-      lx = e.clientX;
-      ly = e.clientY;
+      if (e.button !== 0) return;
+      pointerActive = true;
+      movedDrag = false;
+      sx = lx = e.clientX;
+      sy = ly = e.clientY;
     };
     const pm = (e: PointerEvent) => {
-      if (!dragging || useScene.getState().dragging) return;
-      st.current.yaw -= (e.clientX - lx) * 0.004;
-      st.current.pitch = Math.max(-1.2, Math.min(1.2, st.current.pitch - (e.clientY - ly) * 0.004));
+      if (!pointerActive) return;
+      if (!movedDrag && Math.hypot(e.clientX - sx, e.clientY - sy) >= 5) {
+        movedDrag = true;
+      }
+      if (movedDrag) {
+        st.current.yaw -= (e.clientX - lx) * 0.004;
+        st.current.pitch = Math.max(-1.2, Math.min(1.2, st.current.pitch - (e.clientY - ly) * 0.004));
+      }
       lx = e.clientX;
       ly = e.clientY;
     };
-    const pu = () => (dragging = false);
+    const pu = (e: PointerEvent) => {
+      if (!pointerActive) return;
+      pointerActive = false;
+      if (movedDrag || e.button !== 0 || !camRef.current) return;
+      // Quick click in 1st-person mode: sit/lie on clicked sofa/chair/bed, or walk to clicked floor spot
+      const r = gl.domElement.getBoundingClientRect();
+      ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+      ray.setFromCamera(ndc, camRef.current);
+      const hits = ray.intersectObjects(scene.children, true);
+      const curP = projectRef.current;
+      const curV = versionRef.current;
+      for (const h of hits) {
+        if (h.object.userData?.ui) continue;
+        const itemId = findItemId(h.object);
+        if (itemId) {
+          const it = curV.items.find((x) => x.id === itemId);
+          const prod = it ? getProduct(it.productId, curP) : null;
+          if (it && prod) {
+            const P = resolveParams(prod, it);
+            const fx = Math.sin(deg2rad(it.rot));
+            const fz = Math.cos(deg2rad(it.rot));
+            if (prod.category === 'bed' || prod.ergo === 'bed') {
+              const top = Number(P.frameH ?? 30) + Number(P.mattressT ?? 25);
+              const d = (it.dims ?? prod.dims).d;
+              st.current.x = it.x - fx * (d / 2 - 30);
+              st.current.z = it.z - fz * (d / 2 - 30);
+              st.current.yaw = Math.atan2(-fx, -fz);
+              st.current.sit = false;
+              setScene({ walkPose: 'lie', walkSurface: top, walkTarget: null });
+              useStore.getState().notify(`${it.label || prod.name}에 누운 시점이에요`);
+              return;
+            }
+            if (prod.category === 'sofa' || prod.category === 'chair' || prod.ergo === 'sofa' || prod.ergo === 'chair' || prod.ergo === 'officeChair') {
+              const seat = Number(P.seatH ?? prod.seatH ?? 43);
+              st.current.x = it.x + fx * 10;
+              st.current.z = it.z + fz * 10;
+              st.current.yaw = Math.atan2(-fx, -fz);
+              st.current.sit = false;
+              setScene({ walkPose: 'sit', walkSurface: seat, walkTarget: null });
+              useStore.getState().notify(`${it.label || prod.name}에 앉은 시점이에요`);
+              return;
+            }
+          }
+          break;
+        }
+        if (h.object.userData?.floor) {
+          const tx = h.point.x / S;
+          const tz = h.point.z / S;
+          st.current.sit = false;
+          st.current.stuckTime = 0;
+          setScene({ walkPose: 'stand', walkTarget: { x: tx, z: tz, t: Date.now() } });
+          return;
+        }
+      }
+      // Fallback: intersect floor plane y=0 if inside any room
+      const pl = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+      const pt = new THREE.Vector3();
+      if (ray.ray.intersectPlane(pl, pt)) {
+        const tx = pt.x / S;
+        const tz = pt.z / S;
+        if (curP.plan.rooms.some((rm) => pointInPoly([tx, tz], rm.points))) {
+          st.current.sit = false;
+          st.current.stuckTime = 0;
+          setScene({ walkPose: 'stand', walkTarget: { x: tx, z: tz, t: Date.now() } });
+        }
+      }
+    };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     gl.domElement.addEventListener('pointerdown', pd);
@@ -255,7 +415,7 @@ function WalkCamera({ project }: { project: Project }) {
       window.removeEventListener('pointermove', pm);
       window.removeEventListener('pointerup', pu);
     };
-  }, [gl]);
+  }, [gl, scene]);
 
   const obstacles = useMemo(() => {
     const res = resolveItems(project, version).filter((r) => r.y0 < 60 && r.y1 > 10 && r.prod.model !== 'rug' && r.prod.model !== 'curtain');
@@ -266,8 +426,9 @@ function WalkCamera({ project }: { project: Project }) {
   useFrame((_, dt) => {
     const cam = camRef.current;
     if (!cam || !st.current.inited) return;
+    const stepDt = Math.min(dt, 0.05);
     const k = keys.current;
-    const speed = (k.ShiftLeft || k.ShiftRight ? 220 : 110) * Math.min(dt, 0.05);
+    const speed = (k.ShiftLeft || k.ShiftRight ? 220 : 120) * stepDt;
     let fx = 0;
     let fz = 0;
     const s = st.current;
@@ -275,47 +436,119 @@ function WalkCamera({ project }: { project: Project }) {
     if (k.KeyS || k.ArrowDown) fz += 1;
     if (k.KeyA) fx -= 1;
     if (k.KeyD) fx += 1;
-    if (k.ArrowLeft) s.yaw += 1.6 * dt;
-    if (k.ArrowRight) s.yaw -= 1.6 * dt;
+    if (k.ArrowLeft) s.yaw += 1.6 * stepDt;
+    if (k.ArrowRight) s.yaw -= 1.6 * stepDt;
+
+    const r = a.shoulderW / 2;
+    const tryMove = (nx: number, nz: number) => {
+      for (const w of obstacles.walls) {
+        const ex = w.b[0] - w.a[0];
+        const ez = w.b[1] - w.a[1];
+        const L2 = ex * ex + ez * ez || 1;
+        let t = ((nx - w.a[0]) * ex + (nz - w.a[1]) * ez) / L2;
+        t = Math.max(0, Math.min(1, t));
+        const d = Math.hypot(nx - (w.a[0] + ex * t), nz - (w.a[1] + ez * t));
+        if (d < w.thickness / 2 + r * 0.55) {
+          const pos = t * Math.sqrt(L2);
+          const inDoor = project.plan.openings.some((o) => o.wallId === w.id && o.sill < 10 && Math.abs(pos - o.pos) < o.width / 2 - 4);
+          if (!inDoor) return false;
+        }
+      }
+      // Body clearance around furniture (10cm buffer so camera doesn't clip halfway into sofas)
+      const fr = 10;
+      for (const o of obstacles.res) {
+        if (
+          pointInPoly([nx, nz], o.poly) ||
+          pointInPoly([nx + fr, nz], o.poly) ||
+          pointInPoly([nx - fr, nz], o.poly) ||
+          pointInPoly([nx, nz + fr], o.poly) ||
+          pointInPoly([nx, nz - fr], o.poly)
+        ) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    const applyDelta = (dx: number, dz: number) => {
+      if (tryMove(s.x + dx, s.z + dz)) {
+        s.x += dx;
+        s.z += dz;
+        return true;
+      }
+      if (tryMove(s.x + dx, s.z)) {
+        s.x += dx;
+        return true;
+      }
+      if (tryMove(s.x, s.z + dz)) {
+        s.z += dz;
+        return true;
+      }
+      return false;
+    };
+
     if (fx || fz) {
       const sin = Math.sin(s.yaw);
       const cos = Math.cos(s.yaw);
       const dx = (fx * cos + fz * sin) * speed;
       const dz = (-fx * sin + fz * cos) * speed;
-      const r = a.shoulderW / 2;
-      const tryMove = (nx: number, nz: number) => {
-        for (const w of obstacles.walls) {
-          const ex = w.b[0] - w.a[0];
-          const ez = w.b[1] - w.a[1];
-          const L2 = ex * ex + ez * ez || 1;
-          let t = ((nx - w.a[0]) * ex + (nz - w.a[1]) * ez) / L2;
-          t = Math.max(0, Math.min(1, t));
-          const d = Math.hypot(nx - (w.a[0] + ex * t), nz - (w.a[1] + ez * t));
-          if (d < w.thickness / 2 + r * 0.6) {
-            // allow passing through door openings
-            const pos = t * Math.sqrt(L2);
-            const inDoor = project.plan.openings.some((o) => o.wallId === w.id && o.sill < 10 && Math.abs(pos - o.pos) < o.width / 2 - 8);
-            if (!inDoor) return false;
+      applyDelta(dx, dz);
+    } else {
+      const wt = useScene.getState().walkTarget;
+      if (wt) {
+        const vx = wt.x - s.x;
+        const vz = wt.z - s.z;
+        const distLeft = Math.hypot(vx, vz);
+        if (distLeft < 8) {
+          setScene({ walkTarget: null });
+          s.stuckTime = 0;
+        } else {
+          const step = Math.min(distLeft, 175 * stepDt);
+          const moved = applyDelta((vx / distLeft) * step, (vz / distLeft) * step);
+          if (!moved) {
+            s.stuckTime += stepDt;
+            if (s.stuckTime > 0.25) {
+              setScene({ walkTarget: null });
+              s.stuckTime = 0;
+            }
+          } else {
+            s.stuckTime = 0;
           }
         }
-        for (const o of obstacles.res) if (pointInPoly([nx, nz], o.poly)) return false;
-        return true;
-      };
-      if (tryMove(s.x + dx, s.z + dz)) {
-        s.x += dx;
-        s.z += dz;
-      } else if (tryMove(s.x + dx, s.z)) s.x += dx;
-      else if (tryMove(s.x, s.z + dz)) s.z += dz;
+      }
     }
+
     const wp = useScene.getState().walkPose;
     const eye = wp === 'lie' ? useScene.getState().walkSurface + 22 : wp === 'sit' || s.sit ? useScene.getState().walkSurface + a.sitEyeH : a.eyeH;
     cam.position.set(s.x * S, eye * S, s.z * S);
     cam.rotation.set(s.pitch, s.yaw, 0, 'YXZ');
     const prev = useScene.getState();
     if (prev.walkEye !== eye) setScene({ walkEye: eye });
-    if (!prev.walkPos || Math.abs(prev.walkPos.x - s.x) + Math.abs(prev.walkPos.z - s.z) > 5 || Math.abs(prev.walkPos.yaw - s.yaw) > 0.05) setScene({ walkPos: { x: s.x, z: s.z, yaw: s.yaw } });
+    if (!prev.walkPos || Math.abs(prev.walkPos.x - s.x) + Math.abs(prev.walkPos.z - s.z) > 5 || Math.abs(prev.walkPos.yaw - s.yaw) > 0.05) {
+      setScene({ walkPos: { x: s.x, z: s.z, yaw: s.yaw } });
+    }
   });
   return <PerspectiveCamera ref={camRef} makeDefault fov={70} near={0.05} far={100} />;
+}
+
+function WalkTargetMarker() {
+  const wt = useScene((s) => s.walkTarget);
+  const view = useStore((s) => s.view);
+  const theme = useStore((s) => s.theme);
+  if (view !== 'walk' || !wt) return null;
+  const color = theme === 'dark' ? '#4d8dff' : '#1d57c4';
+  return (
+    <group position={[wt.x, 1.2, wt.z]}>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} userData={{ ui: true }} raycast={() => null}>
+        <ringGeometry args={[10, 14, 32]} />
+        <meshBasicMaterial color={color} transparent opacity={0.85} depthWrite={false} />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, 0]} userData={{ ui: true }} raycast={() => null}>
+        <circleGeometry args={[5, 24]} />
+        <meshBasicMaterial color={color} transparent opacity={0.35} depthWrite={false} />
+      </mesh>
+    </group>
+  );
 }
 
 // ------------------------------------------------------------------ interaction
@@ -323,6 +556,7 @@ interface DragState {
   kind: 'move' | 'rotate';
   ids: string[];
   start: Map<string, { x: number; z: number; y: number; rot: number }>;
+  startScreen: [number, number];
   anchor: Vec2;
   offset: Vec2;
   primary: string;
@@ -330,6 +564,12 @@ interface DragState {
   person: boolean;
   moved: boolean;
   startAngle: number;
+}
+
+interface PendingClick {
+  ids: string[];
+  sx: number;
+  sy: number;
 }
 
 function useRaycastHelpers() {
@@ -363,114 +603,22 @@ function findItemId(o: THREE.Object3D | null): string | null {
   return null;
 }
 
-function Interaction({ project, version }: { project: Project; version: Version }) {
+function Interaction({ project }: { project: Project; version: Version }) {
   const { gl } = useThree();
   const controls = useThree((st) => st.controls) as unknown as { enabled: boolean } | null;
   const controlsRef = useRef(controls);
   controlsRef.current = controls;
   const { setRay, planeHit, objectsHit } = useRaycastHelpers();
   const drag = useRef<DragState | null>(null);
+  const pendingClick = useRef<PendingClick | null>(null);
   const setScene = useScene((s) => s.set);
-  const placing = useStore((s) => s.placing);
-  const placingPerson = useStore((s) => s.placingPerson);
-  const measure = useStore((s) => s.measure);
 
-  // snapping for floor items
-  const snapFloor = (it: PlacedItem, prod: Product, x: number, z: number, rot: number, others: PlacedItem[]): { x: number; z: number; rot: number; guides: { a: Vec2; b: Vec2 }[] } => {
-    const st = useStore.getState().snap;
-    const dims = itemDimsOf(it, prod);
-    const guides: { a: Vec2; b: Vec2 }[] = [];
-    if (st.grid > 0) {
-      x = snapTo(x, st.grid);
-      z = snapTo(z, st.grid);
-    }
-    const thr = 8;
-    // walls: flush any side whose rotation aligns
-    if (st.walls) {
-      const { ux, uz } = itemAxes(rot);
-      let bx = 0;
-      let bz = 0;
-      let bestX = thr;
-      let bestZ = thr;
-      for (const w of project.plan.walls) {
-        const dx = w.b[0] - w.a[0];
-        const dz = w.b[1] - w.a[1];
-        const L = Math.hypot(dx, dz) || 1;
-        const n: Vec2 = [-dz / L, dx / L];
-        const dotX = Math.abs(ux[0] * n[0] + ux[1] * n[1]);
-        const dotZ = Math.abs(uz[0] * n[0] + uz[1] * n[1]);
-        if (Math.max(dotX, dotZ) < 0.985) continue;
-        const ext = (dims.w / 2) * dotX + (dims.d / 2) * dotZ;
-        // signed distance from the wall centre line
-        const sd = (x - w.a[0]) * n[0] + (z - w.a[1]) * n[1];
-        // check projection within wall extent
-        const tt = ((x - w.a[0]) * dx + (z - w.a[1]) * dz) / (L * L);
-        if (tt < -0.05 || tt > 1.05) continue;
-        const target = Math.sign(sd || 1) * (w.thickness / 2 + ext);
-        const delta = target - sd;
-        if (Math.abs(delta) < thr) {
-          const mx = n[0] * delta;
-          const mz = n[1] * delta;
-          if (Math.abs(n[0]) > Math.abs(n[1])) {
-            if (Math.abs(delta) < bestX) {
-              bestX = Math.abs(delta);
-              bx = mx;
-            }
-          } else if (Math.abs(delta) < bestZ) {
-            bestZ = Math.abs(delta);
-            bz = mz;
-          }
-        }
-      }
-      x += bx;
-      z += bz;
-    }
-    // objects: align edges when both are axis aligned
-    if (st.objects && Math.abs(Math.sin(deg2rad(rot) * 2)) < 0.01) {
-      const hw = Math.abs(Math.cos(deg2rad(rot))) > 0.5 ? dims.w / 2 : dims.d / 2;
-      const hd = Math.abs(Math.cos(deg2rad(rot))) > 0.5 ? dims.d / 2 : dims.w / 2;
-      const myX = [x - hw, x, x + hw];
-      const myZ = [z - hd, z, z + hd];
-      let best = { d: 5, v: 0, line: null as null | { a: Vec2; b: Vec2 } };
-      let bestz = { d: 5, v: 0, line: null as null | { a: Vec2; b: Vec2 } };
-      for (const o of others) {
-        const op = getProduct(o.productId, project);
-        if (!op || Math.abs(Math.sin(deg2rad(o.rot) * 2)) > 0.01) continue;
-        const od = itemDimsOf(o, op);
-        const ohw = Math.abs(Math.cos(deg2rad(o.rot))) > 0.5 ? od.w / 2 : od.d / 2;
-        const ohd = Math.abs(Math.cos(deg2rad(o.rot))) > 0.5 ? od.d / 2 : od.w / 2;
-        const ox = [o.x - ohw, o.x, o.x + ohw];
-        const oz = [o.z - ohd, o.z, o.z + ohd];
-        const near = Math.abs(o.z - z) < hd + ohd + 150 && Math.abs(o.x - x) < hw + ohw + 150;
-        if (!near) continue;
-        for (const a of myX)
-          for (const b of ox) {
-            const d = Math.abs(a - b);
-            if (d < best.d) best = { d, v: b - a, line: { a: [b, Math.min(z - hd, o.z - ohd) - 10], b: [b, Math.max(z + hd, o.z + ohd) + 10] } };
-          }
-        for (const a of myZ)
-          for (const b of oz) {
-            const d = Math.abs(a - b);
-            if (d < bestz.d) bestz = { d, v: b - a, line: { a: [Math.min(x - hw, o.x - ohw) - 10, b], b: [Math.max(x + hw, o.x + ohw) + 10, b] } };
-          }
-      }
-      if (best.line) {
-        x += best.v;
-        guides.push(best.line);
-      }
-      if (bestz.line) {
-        z += bestz.v;
-        guides.push(bestz.line);
-      }
-    }
-    return { x, z, rot, guides };
-  };
-
-  const wallPlace = (prod: Product, dims: { w: number; d: number; h: number }) => {
-    const hit = objectsHit((o) => !!o.userData?.wallId);
+  const wallPlace = (dims: { w: number; d: number; h: number }) => {
+    const hit = objectsHit((o) => !!o.userData?.wallId && o.visible);
     if (!hit || !hit.face) return null;
     const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
     n.y = 0;
+    if (n.lengthSq() < 0.001) return null;
     n.normalize();
     const px = hit.point.x / S;
     const pz = hit.point.z / S;
@@ -497,29 +645,38 @@ function Interaction({ project, version }: { project: Project; version: Version 
 
   useEffect(() => {
     const el = gl.domElement;
-    const onMove = (e: PointerEvent) => {
-      setRay(e);
+    let rafId = 0;
+    let latestEvent: PointerEvent | null = null;
+
+    const processMove = (e: PointerEvent) => {
       const s = useStore.getState();
+      if (s.view === 'walk') return;
+      setRay(e);
+
       // placing ghost
       if (s.placing || s.placingPerson) {
+        el.style.cursor = 'crosshair';
         const prod = s.placing ? getProduct(s.placing.productId, s.project) : null;
-        if (prod) {
+        if (prod && s.project) {
           const dims = s.placing!.dims ?? prod.dims;
           const mount = defaultMount(prod);
           if (mount === 'wall') {
-            const w = wallPlace(prod, dims);
-            if (w) return setScene({ ghost: { ...w, valid: true } });
+            const w = wallPlace(dims);
+            if (w) return setScene({ ghost: { ...w, valid: true }, guides: [] });
           }
           if (mount === 'surface') {
             const sp = surfacePlace([]);
-            if (sp) return setScene({ ghost: { x: sp.x, z: sp.z, y: sp.y, rot: useScene.getState().ghost?.rot ?? 0, valid: true } });
+            if (sp) return setScene({ ghost: { x: sp.x, z: sp.z, y: sp.y, rot: useScene.getState().ghost?.rot ?? 0, valid: true }, guides: [] });
           }
           const p = planeHit(0);
           if (p) {
-            const rot = useScene.getState().ghost?.rot ?? 0;
-            const tmp: PlacedItem = { id: '_ghost', productId: prod.id, x: p[0], z: p[1], y: 0, rot, dims: s.placing!.dims };
-            const sn = snapFloor(tmp, prod, p[0], p[1], rot, activeVersion(s.project)!.items);
-            setScene({ ghost: { x: sn.x, z: sn.z, y: defaultElev(prod, project.plan.ceiling), rot, valid: true }, guides: sn.guides });
+            const prevRot = useScene.getState().ghost?.rot ?? 0;
+            const manual = useScene.getState().ghostManualRot;
+            const others = activeVersion(s.project)!.items.filter((i) => !i.hidden);
+            const sn = e.altKey
+              ? { x: p[0], z: p[1], rot: prevRot, guides: [] }
+              : snapFloorItem(s.project, dims, p[0], p[1], prevRot, others, s.snap, { autoOrient: manual ? 'none' : 'faceRoom' });
+            setScene({ ghost: { x: sn.x, z: sn.z, y: defaultElev(prod, s.project.plan.ceiling), rot: sn.rot, valid: true }, guides: sn.guides });
           }
         } else {
           const p = planeHit(0);
@@ -527,13 +684,26 @@ function Interaction({ project, version }: { project: Project; version: Version 
         }
         return;
       }
+
       if (s.measure) {
+        el.style.cursor = 'crosshair';
         const hit = objectsHit((o) => o.type === 'Mesh' && !o.userData?.ui);
         if (hit) setScene({ measureHover: [hit.point.x / S, hit.point.y / S, hit.point.z / S] });
         return;
       }
+
       const d = drag.current;
       if (!d) return;
+
+      // 4px deadzone before committing an Undo checkpoint or moving the object
+      if (!d.moved) {
+        if (Math.hypot(e.clientX - d.startScreen[0], e.clientY - d.startScreen[1]) < 4) return;
+        d.moved = true;
+        s.checkpoint();
+        setScene({ dragging: true });
+        el.style.cursor = 'grabbing';
+      }
+
       const v = activeVersion(s.project)!;
       if (d.kind === 'rotate') {
         const it0 = d.start.get(d.primary)!;
@@ -542,64 +712,81 @@ function Interaction({ project, version }: { project: Project; version: Version 
         const ang = rad2deg(Math.atan2(p[0] - it0.x, p[1] - it0.z));
         let rot = it0.rot + (ang - d.startAngle);
         if (!e.shiftKey && s.snap.angle > 0) rot = snapTo(rot, s.snap.angle);
-        d.moved = true;
-        s.updateItems([d.primary], (it) => (it.rot = normDeg(rot)), false);
+        const norm = normDeg(rot);
+        s.updateItems([d.primary], (it) => (it.rot = norm), false);
+        setScene({ rotating: { id: d.primary, rot: norm, x: it0.x, y: it0.y, z: it0.z } });
         return;
       }
+
       // move
       const it0 = d.start.get(d.primary)!;
       if (!d.person) {
         const item = v.items.find((i) => i.id === d.primary);
         const prod = item ? getProduct(item.productId, s.project) : null;
-        if (!item || !prod) return;
-        const dims = itemDimsOf(item, prod);
+        if (!item || !prod || !s.project) return;
+        const dims = effectiveItemDims(item, prod);
+
         if (d.mount === 'wall' && d.ids.length === 1) {
-          const w = wallPlace(prod, dims);
+          const w = wallPlace(dims);
           if (w) {
-            d.moved = true;
-            s.updateItems([d.primary], (it) => {
-              it.x = w.x;
-              it.z = w.z;
-              it.y = w.y;
-              it.rot = w.rot;
-            }, false);
+            s.updateItems(
+              [d.primary],
+              (it) => {
+                it.x = w.x;
+                it.z = w.z;
+                it.y = w.y;
+                it.rot = w.rot;
+              },
+              false,
+            );
             return;
           }
         }
         if (d.mount === 'surface' && d.ids.length === 1) {
           const sp = surfacePlace(d.ids);
-          const p = sp ?? (() => {
-            const q = planeHit(0);
-            return q ? { x: q[0], z: q[1], y: 0 } : null;
-          })();
+          const p =
+            sp ??
+            (() => {
+              const q = planeHit(0);
+              return q ? { x: q[0], z: q[1], y: 0 } : null;
+            })();
           if (p) {
-            d.moved = true;
-            s.updateItems([d.primary], (it) => {
-              it.x = snapTo(p.x, s.snap.grid || 0);
-              it.z = snapTo(p.z, s.snap.grid || 0);
-              it.y = p.y;
-            }, false);
+            s.updateItems(
+              [d.primary],
+              (it) => {
+                it.x = snapTo(p.x, s.snap.grid || 0);
+                it.z = snapTo(p.z, s.snap.grid || 0);
+                it.y = p.y;
+              },
+              false,
+            );
           }
           return;
         }
-        const p = planeHit(d.mount === 'ceiling' ? it0.y : 0);
+
+        // Raycast at the item's actual height so lifted/ceiling items have zero parallax jump
+        const planeY = d.mount === 'ceiling' || it0.y > 1 ? it0.y : 0;
+        const p = planeHit(planeY);
         if (!p) return;
         let nx = p[0] + d.offset[0];
         let nz = p[1] + d.offset[1];
-        let guides: { a: Vec2; b: Vec2 }[] = [];
+        let nextRot = item.rot;
+        let guides: ReturnType<typeof snapFloorItem>['guides'] = [];
+
         if (d.ids.length === 1 && !e.altKey) {
           const others = v.items.filter((i) => i.id !== d.primary && !i.hidden);
-          const sn = snapFloor(item, prod, nx, nz, item.rot, others);
+          const sn = snapFloorItem(s.project, dims, nx, nz, it0.rot, others, s.snap, { autoOrient: 'nearest90' });
           nx = sn.x;
           nz = sn.z;
+          nextRot = sn.rot;
           guides = sn.guides;
-        } else if (s.snap.grid > 0) {
+        } else if (s.snap.grid > 0 && !e.altKey) {
           nx = snapTo(nx, s.snap.grid);
           nz = snapTo(nz, s.snap.grid);
         }
+
         const dx = nx - it0.x;
         const dz = nz - it0.z;
-        d.moved = true;
         setScene({ guides });
         s.updateItems(
           d.ids,
@@ -608,6 +795,7 @@ function Interaction({ project, version }: { project: Project; version: Version 
             if (!st0) return;
             it.x = st0.x + dx;
             it.z = st0.z + dz;
+            if (d.ids.length === 1 && it.id === d.primary) it.rot = nextRot;
           },
           false,
         );
@@ -616,19 +804,52 @@ function Interaction({ project, version }: { project: Project; version: Version 
         if (!p) return;
         const nx = snapTo(p[0] + d.offset[0], s.snap.grid || 0);
         const nz = snapTo(p[1] + d.offset[1], s.snap.grid || 0);
-        d.moved = true;
-        s.updateItems([d.primary], (h) => {
-          h.x = nx;
-          h.z = nz;
-        }, false);
+        s.updateItems(
+          [d.primary],
+          (h) => {
+            h.x = nx;
+            h.z = nz;
+          },
+          false,
+        );
       }
     };
-    const onUp = () => {
+
+    const onMove = (e: PointerEvent) => {
+      latestEvent = e;
+      if (!rafId) {
+        rafId = requestAnimationFrame(() => {
+          rafId = 0;
+          if (latestEvent) {
+            const ev = latestEvent;
+            latestEvent = null;
+            processMove(ev);
+          }
+        });
+      }
+    };
+
+    const onUp = (e: PointerEvent) => {
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = 0;
+        latestEvent = null;
+      }
+      // 2-step click-to-select for unselected items (allows orbiting when dragged instead of clicked)
+      const pc = pendingClick.current;
+      if (pc) {
+        pendingClick.current = null;
+        if (Math.hypot(e.clientX - pc.sx, e.clientY - pc.sy) < 5) {
+          useStore.getState().select(pc.ids);
+        }
+      }
+
       const d = drag.current;
       if (d) {
         drag.current = null;
         if (controlsRef.current) controlsRef.current.enabled = true;
-        setScene({ dragging: false, guides: [] });
+        setScene({ dragging: false, guides: [], rotating: null });
+        el.style.cursor = '';
         if (d.person && d.moved) {
           // snap a sitting / lying person onto a seat or bed under them
           const s = useStore.getState();
@@ -641,14 +862,18 @@ function Interaction({ project, version }: { project: Project; version: Version 
               if (ok && pointInPoly([h.x, h.z], r.poly)) {
                 const P = resolveParams(r.prod, r.it);
                 const seat = h.pose === 'lie' ? Number(P.frameH ?? 30) + Number(P.mattressT ?? 25) - 10 : Number(P.seatH ?? r.prod.seatH ?? 45);
-                s.updateItems([h.id], (pp) => {
-                  pp.y = seat;
-                  pp.rot = r.it.rot;
-                  if (h.pose === 'lie') {
-                    pp.x = r.it.x;
-                    pp.z = r.it.z;
-                  }
-                }, false);
+                s.updateItems(
+                  [h.id],
+                  (pp) => {
+                    pp.y = seat;
+                    pp.rot = r.it.rot;
+                    if (h.pose === 'lie') {
+                      pp.x = r.it.x;
+                      pp.z = r.it.z;
+                    }
+                  },
+                  false,
+                );
                 break;
               }
             }
@@ -656,23 +881,28 @@ function Interaction({ project, version }: { project: Project; version: Version 
         }
       }
     };
+
     el.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
     return () => {
+      if (rafId) cancelAnimationFrame(rafId);
       el.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
   }, [gl, project]);
 
-  // start drag (called by items)
+  // start drag / click selection (called by items)
   useEffect(() => {
+    interactionApi.queueSelect = (ids, sx, sy) => {
+      pendingClick.current = { ids, sx, sy };
+    };
     interactionApi.startMove = (e, id, isPerson) => {
       const s = useStore.getState();
+      if (s.view === 'walk') return;
       const v = activeVersion(s.project)!;
       const native = e.nativeEvent as PointerEvent;
       setRay(native);
       let ids = s.selection.includes(id) ? s.selection : [id];
-      // groups
       if (!isPerson) {
         const it = v.items.find((i) => i.id === id);
         if (it?.groupId && !native.shiftKey) ids = Array.from(new Set([...ids, ...v.items.filter((i) => i.groupId === it.groupId).map((i) => i.id)]));
@@ -690,41 +920,62 @@ function Interaction({ project, version }: { project: Project; version: Version 
       const prim = start.get(id)!;
       const item = v.items.find((i) => i.id === id);
       const prod = item ? getProduct(item.productId, s.project) : null;
-      const mount = prod ? defaultMount(prod) : 'floor';
-      const hp = planeHit(mount === 'ceiling' ? prim.y : 0) ?? [prim.x, prim.z];
-      s.checkpoint();
-      drag.current = { kind: 'move', ids: movable, start, anchor: hp, offset: [prim.x - hp[0], prim.z - hp[1]], primary: id, mount, person: isPerson, moved: false, startAngle: 0 };
+      const mount = item && prod && s.project ? effectiveMount(item, prod, s.project.plan.ceiling) : 'floor';
+      const planeY = mount === 'ceiling' || prim.y > 1 ? prim.y : 0;
+      const hp = planeHit(planeY) ?? [prim.x, prim.z];
+      drag.current = {
+        kind: 'move',
+        ids: movable,
+        start,
+        startScreen: [native.clientX, native.clientY],
+        anchor: hp,
+        offset: [prim.x - hp[0], prim.z - hp[1]],
+        primary: id,
+        mount,
+        person: isPerson,
+        moved: false,
+        startAngle: 0,
+      };
       if (controlsRef.current) controlsRef.current.enabled = false;
-      setScene({ dragging: true });
     };
     interactionApi.startRotate = (e, id) => {
       const s = useStore.getState();
+      if (s.view === 'walk') return;
       const v = activeVersion(s.project)!;
       const it = v.items.find((i) => i.id === id) ?? (v.people.find((h) => h.id === id) as unknown as PlacedItem);
       if (!it || it.locked) return;
-      setRay(e.nativeEvent as PointerEvent);
+      const native = e.nativeEvent as PointerEvent;
+      setRay(native);
       const p = planeHit(it.y) ?? [it.x, it.z + 1];
-      s.checkpoint();
-      drag.current = { kind: 'rotate', ids: [id], start: new Map([[id, { x: it.x, z: it.z, y: it.y, rot: it.rot }]]), anchor: p, offset: [0, 0], primary: id, mount: 'floor', person: false, moved: false, startAngle: rad2deg(Math.atan2(p[0] - it.x, p[1] - it.z)) };
+      drag.current = {
+        kind: 'rotate',
+        ids: [id],
+        start: new Map([[id, { x: it.x, z: it.z, y: it.y, rot: it.rot }]]),
+        startScreen: [native.clientX, native.clientY],
+        anchor: p,
+        offset: [0, 0],
+        primary: id,
+        mount: 'floor',
+        person: false,
+        moved: false,
+        startAngle: rad2deg(Math.atan2(p[0] - it.x, p[1] - it.z)),
+      };
       if (controlsRef.current) controlsRef.current.enabled = false;
-      setScene({ dragging: true });
     };
   }, [project]);
 
   // click on empty space / placing
   const onBgDown = (e: ThreeEvent<PointerEvent>) => {
     const s = useStore.getState();
-    if (e.button !== 0) return;
+    if (e.button !== 0 || s.view === 'walk') return;
     if (s.placing) {
       e.stopPropagation();
       const g = useScene.getState().ghost;
       if (!g) return;
-      const id = s.addItem(s.placing.productId, g.x, g.z, { rot: g.rot, y: g.y, dims: s.placing.dims, params: s.placing.params });
+      s.addItem(s.placing.productId, g.x, g.z, { rot: g.rot, y: g.y, dims: s.placing.dims, params: s.placing.params });
       if (!(e.nativeEvent as PointerEvent).shiftKey) {
         s.cancelPlacing();
-        setScene({ ghost: null, guides: [] });
       }
-      void id;
       return;
     }
     if (s.placingPerson) {
@@ -744,23 +995,87 @@ function Interaction({ project, version }: { project: Project; version: Version 
     }
   };
 
-  void placing;
-  void placingPerson;
-  void measure;
   interactionApi.bgDown = onBgDown;
   return null;
 }
 
 export const interactionApi: {
+  queueSelect: (ids: string[], sx: number, sy: number) => void;
   startMove: (e: ThreeEvent<PointerEvent>, id: string, isPerson: boolean) => void;
   startRotate: (e: ThreeEvent<PointerEvent>, id: string) => void;
   bgDown: (e: ThreeEvent<PointerEvent>) => void;
-} = { startMove: () => {}, startRotate: () => {}, bgDown: () => {} };
+} = { queueSelect: () => {}, startMove: () => {}, startRotate: () => {}, bgDown: () => {} };
 
 // ------------------------------------------------------------------ items & people
+const ItemNode = memo(function ItemNode({
+  it,
+  prod,
+  imageRef,
+  sel,
+  bad,
+  warn,
+  walk,
+  busy,
+  allItems,
+}: {
+  it: PlacedItem;
+  prod: Product;
+  imageRef?: RefItem;
+  sel: boolean;
+  bad: boolean;
+  warn: boolean;
+  walk: boolean;
+  busy: boolean;
+  allItems: PlacedItem[];
+}) {
+  const { gl } = useThree();
+  const dims = effectiveItemDims(it, prod);
+  return (
+    <group
+      position={[it.x, it.y, it.z]}
+      rotation={[0, deg2rad(it.rot), 0]}
+      userData={{ itemId: it.id }}
+      onPointerOver={(e) => {
+        if (walk || busy || useScene.getState().dragging) return;
+        e.stopPropagation();
+        gl.domElement.style.cursor = sel && !it.locked ? 'grab' : 'pointer';
+      }}
+      onPointerOut={() => {
+        if (!useScene.getState().dragging && !busy) gl.domElement.style.cursor = '';
+      }}
+      onPointerDown={(e) => {
+        if (walk || busy || e.button !== 0) return;
+        e.stopPropagation();
+        const s = useStore.getState();
+        const native = e.nativeEvent as PointerEvent;
+        const groupIds = it.groupId && !native.shiftKey ? allItems.filter((i) => i.groupId === it.groupId).map((i) => i.id) : [it.id];
+        if (native.shiftKey) {
+          s.select([it.id], true);
+          return;
+        }
+        // 2-step interaction: unselected items select on click & let drags orbit camera; already-selected items drag immediately (4px deadzone)
+        if (s.selection.includes(it.id)) {
+          if (!it.locked) interactionApi.startMove(e, it.id, false);
+        } else {
+          interactionApi.queueSelect(groupIds, native.clientX, native.clientY);
+        }
+      }}
+    >
+      <group scale={[it.mirror ? -1 : 1, 1, 1]}>
+        <ItemModel item={it} prod={prod} imageRef={imageRef} />
+      </group>
+      {sel && !walk && <OutlineBox w={dims.w} d={dims.d} h={dims.h} color={it.locked ? '#8a847c' : '#2f6fed'} />}
+      {sel && !walk && <Footprint w={dims.w} d={dims.d} color="#2f6fed" y={-it.y + 0.8} />}
+      {!sel && bad ? <OutlineBox w={dims.w} d={dims.d} h={dims.h} color="#e5484d" pad={0.5} /> : null}
+      {!sel && warn ? <OutlineBox w={dims.w} d={dims.d} h={dims.h} color="#f08c00" pad={0.5} /> : null}
+      {bad ? <Footprint w={dims.w} d={dims.d} color="#e5484d" opacity={0.28} y={-it.y + 0.9} /> : null}
+    </group>
+  );
+});
+
 function Items({ project, version, issues }: { project: Project; version: Version; issues: Map<string, { level: string; msg: string }[]> }) {
   const selection = useStore((s) => s.selection);
-  const show = useStore((s) => s.show);
+  const showCollisions = useStore((s) => s.show.collisions);
   const busy = useStore((s) => !!(s.placing || s.placingPerson || s.measure));
   const walk = useStore((s) => s.view === 'walk');
   const refs = project.moodboard;
@@ -770,37 +1085,23 @@ function Items({ project, version, issues }: { project: Project; version: Versio
         if (it.hidden) return null;
         const prod = getProduct(it.productId, project);
         if (!prod) return null;
-        const dims = itemDimsOf(it, prod);
         const sel = selection.includes(it.id);
         const iss = issues.get(it.id);
-        const bad = show.collisions && !walk && iss?.some((x) => x.level === 'bad');
-        const warn = show.collisions && !walk && !bad && iss?.length;
+        const bad = !!(showCollisions && !walk && iss?.some((x) => x.level === 'bad'));
+        const warn = !!(showCollisions && !walk && !bad && iss?.length);
         return (
-          <group
+          <ItemNode
             key={it.id}
-            position={[it.x, it.y, it.z]}
-            rotation={[0, deg2rad(it.rot), 0]}
-            userData={{ itemId: it.id }}
-            onPointerDown={(e) => {
-              if (busy || e.button !== 0) return;
-              e.stopPropagation();
-              const s = useStore.getState();
-              const native = e.nativeEvent as PointerEvent;
-              const groupIds = it.groupId && !native.shiftKey ? version.items.filter((i) => i.groupId === it.groupId).map((i) => i.id) : [it.id];
-              if (native.shiftKey) s.select([it.id], true);
-              else if (!s.selection.includes(it.id)) s.select(groupIds);
-              interactionApi.startMove(e, it.id, false);
-            }}
-          >
-            <group scale={[it.mirror ? -1 : 1, 1, 1]}>
-              <ItemModel item={it} prod={prod} imageRef={it.imageRef ? refs.find((r) => r.id === it.imageRef) : undefined} />
-            </group>
-            {sel && !walk && <OutlineBox w={dims.w} d={dims.d} h={dims.h} color={it.locked ? '#8a847c' : '#2f6fed'} />}
-            {sel && !walk && <Footprint w={dims.w} d={dims.d} color="#2f6fed" y={-it.y + 0.8} />}
-            {!sel && bad ? <OutlineBox w={dims.w} d={dims.d} h={dims.h} color="#e5484d" pad={0.5} /> : null}
-            {!sel && warn ? <OutlineBox w={dims.w} d={dims.d} h={dims.h} color="#f08c00" pad={0.5} /> : null}
-            {bad ? <Footprint w={dims.w} d={dims.d} color="#e5484d" opacity={0.28} y={-it.y + 0.9} /> : null}
-          </group>
+            it={it}
+            prod={prod}
+            imageRef={it.imageRef ? refs.find((r) => r.id === it.imageRef) : undefined}
+            sel={sel}
+            bad={bad}
+            warn={warn}
+            walk={walk}
+            busy={busy}
+            allItems={version.items}
+          />
         );
       })}
     </>
@@ -810,16 +1111,17 @@ function Items({ project, version, issues }: { project: Project; version: Versio
 function People({ project, version }: { project: Project; version: Version }) {
   const selection = useStore((s) => s.selection);
   const busy = useStore((s) => !!(s.placing || s.placingPerson || s.measure));
+  const walk = useStore((s) => s.view === 'walk');
   return (
     <>
       {version.people.map((h) => (
-        <PersonNode key={h.id} h={h} project={project} selected={selection.includes(h.id)} busy={busy} />
+        <PersonNode key={h.id} h={h} project={project} selected={selection.includes(h.id)} busy={busy} walk={walk} />
       ))}
     </>
   );
 }
 
-function PersonNode({ h, project, selected, busy }: { h: PlacedPerson; project: Project; selected: boolean; busy: boolean }) {
+function PersonNode({ h, project, selected, busy, walk }: { h: PlacedPerson; project: Project; selected: boolean; busy: boolean; walk: boolean }) {
   const prof = project.profiles.find((p) => p.id === h.profileId) ?? project.profiles[0];
   const height = prof?.height ?? 170;
   const obj = useMemo(() => buildPerson(height, h.pose, prof?.color ?? '#e8a17a', h.pose === 'sit' ? h.y || 45 : h.pose === 'lie' ? h.y || 40 : 45), [height, h.pose, prof?.color, h.y]);
@@ -829,10 +1131,19 @@ function PersonNode({ h, project, selected, busy }: { h: PlacedPerson; project: 
       position={[h.x, yOff, h.z]}
       rotation={[0, deg2rad(h.rot), 0]}
       onPointerDown={(e) => {
-        if (busy || e.button !== 0) return;
+        if (walk || busy || e.button !== 0) return;
         e.stopPropagation();
-        useStore.getState().select([h.id], (e.nativeEvent as PointerEvent).shiftKey);
-        interactionApi.startMove(e, h.id, true);
+        const s = useStore.getState();
+        const native = e.nativeEvent as PointerEvent;
+        if (native.shiftKey) {
+          s.select([h.id], true);
+          return;
+        }
+        if (s.selection.includes(h.id)) {
+          interactionApi.startMove(e, h.id, true);
+        } else {
+          interactionApi.queueSelect([h.id], native.clientX, native.clientY);
+        }
       }}
     >
       <primitive object={obj} />
@@ -848,10 +1159,12 @@ function PersonNode({ h, project, selected, busy }: { h: PlacedPerson; project: 
 
 // ------------------------------------------------------------------ overlays
 function SelectionOverlay({ project, version }: { project: Project; version: Version }) {
+  const { gl } = useThree();
   const selection = useStore((s) => s.selection);
   const show = useStore((s) => s.show);
   const view = useStore((s) => s.view);
   const theme = useStore((s) => s.theme);
+  const rotating = useScene((s) => s.rotating);
   const id = selection.length === 1 && view !== 'walk' ? selection[0] : null;
   const it = id ? version.items.find((i) => i.id === id) : null;
   const prod = it ? getProduct(it.productId, project) : null;
@@ -859,32 +1172,67 @@ function SelectionOverlay({ project, version }: { project: Project; version: Ver
   if (!it || !prod) return null;
   const accent = theme === 'dark' ? '#4d8dff' : '#1d57c4';
   const warnColor = theme === 'dark' ? '#e8a838' : '#b45309';
-  const dims = itemDimsOf(it, prod);
-  const r = Math.max(dims.w, dims.d) / 2 + 22;
+  const dims = effectiveItemDims(it, prod);
+  const r = Math.min(130, Math.max(36, Math.max(dims.w, dims.d) / 2 + 18));
   const y = it.y + 1;
   const dimLabelY = it.y + dims.h + 6;
   const fw = localToWorld(it.x, it.z, it.rot, 0, dims.d / 2 + 14);
   const sw = localToWorld(it.x, it.z, it.rot, dims.w / 2 + 14, 0);
+  const handleX = Math.sin(deg2rad(it.rot)) * r;
+  const handleZ = Math.cos(deg2rad(it.rot)) * r;
   return (
     <group>
       {/* rotation handle */}
       {!it.locked && view !== 'walk' && (
         <group position={[it.x, y, it.z]}>
-          <mesh rotation={[-Math.PI / 2, 0, 0]} userData={{ ui: true }} onPointerDown={(e) => { e.stopPropagation(); interactionApi.startRotate(e, it.id); }}>
-            <ringGeometry args={[r - 4, r + 4, 64]} />
+          <mesh
+            rotation={[-Math.PI / 2, 0, 0]}
+            userData={{ ui: true }}
+            onPointerOver={(e) => {
+              e.stopPropagation();
+              gl.domElement.style.cursor = 'grab';
+            }}
+            onPointerOut={() => {
+              if (!useScene.getState().dragging) gl.domElement.style.cursor = '';
+            }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              interactionApi.startRotate(e, it.id);
+            }}
+          >
+            <ringGeometry args={[r - 5, r + 5, 64]} />
             <meshBasicMaterial color={accent} transparent opacity={0.0} depthWrite={false} />
           </mesh>
           <mesh rotation={[-Math.PI / 2, 0, 0]} raycast={() => null}>
             <ringGeometry args={[r - 0.8, r + 0.8, 64]} />
             <meshBasicMaterial color={accent} transparent opacity={0.62} depthWrite={false} />
           </mesh>
-          <mesh position={[Math.sin(deg2rad(it.rot)) * r, 0, Math.cos(deg2rad(it.rot)) * r]} userData={{ ui: true }} onPointerDown={(e) => { e.stopPropagation(); interactionApi.startRotate(e, it.id); }}>
+          <mesh
+            position={[handleX, 0, handleZ]}
+            userData={{ ui: true }}
+            onPointerOver={(e) => {
+              e.stopPropagation();
+              gl.domElement.style.cursor = 'grab';
+            }}
+            onPointerOut={() => {
+              if (!useScene.getState().dragging) gl.domElement.style.cursor = '';
+            }}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              interactionApi.startRotate(e, it.id);
+            }}
+          >
             <sphereGeometry args={[6, 16, 12]} />
             <meshBasicMaterial color={accent} />
           </mesh>
+          {rotating?.id === it.id && (
+            <Html position={[handleX, 16, handleZ]} center style={{ pointerEvents: 'none' }} zIndexRange={[30, 0]}>
+              <div className="tag3d measure mono">{Math.round(rotating.rot)}°</div>
+            </Html>
+          )}
         </group>
       )}
-      {show.dims && (
+      {show.dims && !rotating && (
         <>
           <Html position={[fw[0], dimLabelY - dims.h + 2, fw[1]]} center style={{ pointerEvents: 'none' }} zIndexRange={[20, 0]}>
             <div className="tag3d dim">W {Math.round(dims.w)}</div>
@@ -893,7 +1241,10 @@ function SelectionOverlay({ project, version }: { project: Project; version: Ver
             <div className="tag3d dim">D {Math.round(dims.d)}</div>
           </Html>
           <Html position={[it.x, dimLabelY, it.z]} center style={{ pointerEvents: 'none' }} zIndexRange={[20, 0]}>
-            <div className="tag3d dim">H {Math.round(dims.h)}{it.y > 0.5 ? ` · 바닥+${Math.round(it.y)}` : ''}</div>
+            <div className="tag3d dim">
+              H {Math.round(dims.h)}
+              {it.y > 0.5 ? ` · 바닥+${Math.round(it.y)}` : ''}
+            </div>
           </Html>
           {gaps.map((g) => {
             const color = g.dist < 60 && g.dist >= 2 ? warnColor : accent;
@@ -979,10 +1330,24 @@ function flipped(t: THREE.DataTexture) {
 
 function Guides() {
   const guides = useScene((s) => s.guides);
+  const theme = useStore((s) => s.theme);
+  const wallColor = theme === 'dark' ? '#4d8dff' : '#1d57c4';
   return (
     <>
       {guides.map((g, i) => (
-        <Line key={i} points={[[g.a[0], 2, g.a[1]], [g.b[0], 2, g.b[1]]]} color="#e5484d" lineWidth={1} dashed dashSize={5} gapSize={3} depthTest={false} />
+        <Line
+          key={i}
+          points={[
+            [g.a[0], 2, g.a[1]],
+            [g.b[0], 2, g.b[1]],
+          ]}
+          color={g.kind === 'wall' ? wallColor : '#e5484d'}
+          lineWidth={g.kind === 'wall' ? 2 : 1}
+          dashed={g.kind !== 'wall'}
+          dashSize={5}
+          gapSize={3}
+          depthTest={false}
+        />
       ))}
     </>
   );
@@ -1074,12 +1439,51 @@ function Labels({ project, version }: { project: Project; version: Version }) {
   );
 }
 
+interface CamAnim {
+  t0: number;
+  dur: number;
+  p0: THREE.Vector3;
+  p1: THREE.Vector3;
+  tgt0: THREE.Vector3;
+  tgt1: THREE.Vector3;
+}
+
 function CameraRig({ project, version }: { project: Project; version: Version }) {
   const req = useScene((s) => s.camReq);
   const { camera, invalidate } = useThree();
-  const controls = useThree((s) => s.controls) as unknown as { target: THREE.Vector3; update: () => void } | null;
+  const controls = useThree((st) => st.controls) as unknown as {
+    target: THREE.Vector3;
+    update: () => void;
+    addEventListener?: (e: string, cb: () => void) => void;
+    removeEventListener?: (e: string, cb: () => void) => void;
+  } | null;
+  const animRef = useRef<CamAnim | null>(null);
+
+  // Cancel smooth camera flight immediately if user starts orbiting/panning manually
   useEffect(() => {
-    if (!req || !controls || !(camera as THREE.PerspectiveCamera).isPerspectiveCamera) return;
+    if (!controls?.addEventListener) return;
+    const cancel = () => {
+      animRef.current = null;
+    };
+    controls.addEventListener('start', cancel);
+    return () => controls.removeEventListener?.('start', cancel);
+  }, [controls]);
+
+  useEffect(() => {
+    if (!req || !controls) return;
+
+    // Support zoom buttons in Top (OrthographicCamera) view too
+    if ((camera as THREE.OrthographicCamera).isOrthographicCamera) {
+      if (req.preset === 'zoom') {
+        const ortho = camera as THREE.OrthographicCamera;
+        ortho.zoom = Math.max(15, Math.min(400, ortho.zoom / (req.f ?? 1)));
+        ortho.updateProjectionMatrix();
+        invalidate();
+      }
+      return;
+    }
+
+    if (!(camera as THREE.PerspectiveCamera).isPerspectiveCamera) return;
     const b = planBounds(project);
     const cx = ((b.minX + b.maxX) / 2) * S;
     const cz = ((b.minY + b.maxY) / 2) * S;
@@ -1102,6 +1506,7 @@ function CameraRig({ project, version }: { project: Project; version: Version })
       }
       return { px: px * S, pz: pz * S, nx, nz };
     };
+
     let pos: THREE.Vector3 | null = null;
     let tgt: THREE.Vector3 | null = null;
     if (req.preset === 'iso') {
@@ -1120,10 +1525,11 @@ function CameraRig({ project, version }: { project: Project; version: Version })
         tgt = new THREE.Vector3(f.px + f.nx * 4, 0.9, f.pz + f.nz * 4 + 0.001);
       }
     } else if (req.preset === 'desk') {
-      const deskOf = (builtin: boolean) => version.items.find((i) => {
-        const pr = getProduct(i.productId, project);
-        return pr?.ergo === 'desk' && !!pr.builtin === builtin;
-      });
+      const deskOf = (builtin: boolean) =>
+        version.items.find((i) => {
+          const pr = getProduct(i.productId, project);
+          return pr?.ergo === 'desk' && !!pr.builtin === builtin;
+        });
       const desk = deskOf(true) ?? deskOf(false);
       if (desk) {
         const r = deg2rad(desk.rot);
@@ -1139,13 +1545,49 @@ function CameraRig({ project, version }: { project: Project; version: Version })
       pos = tgt.clone().add(off);
     } else if (req.preset === 'zoom') {
       const off = camera.position.clone().sub(controls.target).multiplyScalar(req.f ?? 1);
+      off.setLength(Math.max(0.8, Math.min(40, off.length())));
       pos = controls.target.clone().add(off);
+      tgt = controls.target.clone();
     }
-    if (pos) camera.position.copy(pos);
-    if (tgt) controls.target.copy(tgt);
-    controls.update();
-    invalidate();
+
+    if (pos || tgt) {
+      animRef.current = {
+        t0: performance.now(),
+        dur: req.preset === 'zoom' ? 160 : 280,
+        p0: camera.position.clone(),
+        p1: pos ?? camera.position.clone(),
+        tgt0: controls.target.clone(),
+        tgt1: tgt ?? controls.target.clone(),
+      };
+      invalidate();
+    }
   }, [req]);
+
+  useFrame(() => {
+    const a = animRef.current;
+    if (!a || !controls) return;
+    const raw = Math.min(1, (performance.now() - a.t0) / a.dur);
+    const u = 1 - Math.pow(1 - raw, 3); // cubic ease-out
+    camera.position.lerpVectors(a.p0, a.p1, u);
+    controls.target.lerpVectors(a.tgt0, a.tgt1, u);
+    controls.update();
+    if (raw < 1) {
+      invalidate();
+    } else {
+      animRef.current = null;
+      const prev = useScene.getState().camSaved;
+      useScene.getState().set({
+        camSaved: {
+          ...prev,
+          [project.id]: {
+            pos: [camera.position.x, camera.position.y, camera.position.z],
+            target: [controls.target.x, controls.target.y, controls.target.z],
+          },
+        },
+      });
+    }
+  });
+
   return null;
 }
 
@@ -1159,37 +1601,52 @@ function FloorGrid({ project }: { project: Project }) {
   return <gridHelper key={theme} args={[size, size / 50, c1, c2]} position={[(b.minX + b.maxX) / 2, 0.5, (b.minY + b.maxY) / 2]} />;
 }
 
-function AutoThumb({ version }: { version: Version }) {
+/** On-demand thumbnail capture (called on version switch/save/compare or tab hide — zero 2.5s editing stutter). */
+function ThumbRegistrar({ version }: { version: Version }) {
   const { gl, scene, camera } = useThree();
-  const view = useStore((s) => s.view);
-  const selCount = useStore((s) => s.selection.length);
-  const dragging = useScene((s) => s.dragging);
+  const vidRef = useRef(version.id);
+  vidRef.current = version.id;
+
   useEffect(() => {
-    if (view === 'walk' || dragging) return;
-    const t = setTimeout(() => {
+    const capture = () => {
       const st = useStore.getState();
-      if (st.view !== '3d' || st.selection.length || st.placing || st.measure) return;
-      gl.render(scene, camera);
-      const src = gl.domElement;
-      const c = document.createElement('canvas');
-      c.width = 360;
-      c.height = Math.round((360 * src.height) / Math.max(1, src.width));
-      c.getContext('2d')!.drawImage(src, 0, 0, c.width, c.height);
-      const thumb = c.toDataURL('image/jpeg', 0.7);
-      const vid = version.id;
-      const curV = useStore.getState().project?.versions.find((x) => x.id === vid);
-      if (!curV || curV.thumb === thumb) return;
-      useStore.getState().mutate(
-        (p) => {
-          const v = p.versions.find((x) => x.id === vid);
-          if (v) v.thumb = thumb;
-        },
-        false,
-        true,
-      );
-    }, 2500);
-    return () => clearTimeout(t);
-  }, [version.id, version.updatedAt, view, dragging, selCount]);
+      if (st.view !== '3d' || useScene.getState().dragging) return;
+      try {
+        gl.render(scene, camera);
+        const src = gl.domElement;
+        if (!src.width || !src.height) return;
+        const c = document.createElement('canvas');
+        c.width = 360;
+        c.height = Math.round((360 * src.height) / Math.max(1, src.width));
+        c.getContext('2d')!.drawImage(src, 0, 0, c.width, c.height);
+        const thumb = c.toDataURL('image/jpeg', 0.7);
+        const vid = vidRef.current;
+        const curV = st.project?.versions.find((x) => x.id === vid);
+        if (!curV || curV.thumb === thumb) return;
+        st.mutate(
+          (p) => {
+            const v = p.versions.find((x) => x.id === vid);
+            if (v) v.thumb = thumb;
+          },
+          false,
+          true,
+        );
+      } catch {
+        /* ignore WebGL context loss */
+      }
+    };
+
+    useScene.getState().set({ captureThumb: capture });
+    const onVis = () => {
+      if (document.visibilityState === 'hidden') capture();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      if (useScene.getState().captureThumb === capture) useScene.getState().set({ captureThumb: null });
+    };
+  }, [gl, scene, camera]);
+
   return null;
 }
 
@@ -1236,43 +1693,44 @@ export function Viewport() {
         downPos.y = e.clientY;
       }}
     >
-    <Canvas
-      frameloop={view === 'walk' ? 'always' : 'demand'}
-      shadows
-      dpr={[1, 2]}
-      gl={{ antialias: true, preserveDrawingBuffer: false }}
-      onPointerMissed={(e) => {
-        const s = useStore.getState();
-        const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 5;
-        if (e.button === 0 && !moved && !s.placing && !s.placingPerson && !s.measure && !useScene.getState().dragging) s.select([]);
-      }}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      <color attach="background" args={[bg]} />
-      <Suspense fallback={null}>
-        <Env />
-        <Lights project={project} version={version} />
-        <Cameras project={project} />
-        <group scale={S}>
-          <Room3D plan={project.plan} finishes={version.finishes} wallMode={show.walls} view={view} showCeiling={show.ceiling} />
-          <Interaction project={project} version={version} />
-          <Items project={project} version={version} issues={issues} />
-          {show.people && view !== 'walk' && <People project={project} version={version} />}
-          <SelectionOverlay project={project} version={version} />
-          <ClearanceZones project={project} version={version} />
-          <HeatmapLayer project={project} version={version} />
-          <Guides />
-          <GhostLayer project={project} />
-          <Measures />
-          <Labels project={project} version={version} />
-          <PlaneCatcher />
-          <FloorGrid project={project} />
-        </group>
-        <ShotTaker version={version} />
-        <AutoThumb version={version} />
-        <CameraRig project={project} version={version} />
-      </Suspense>
-    </Canvas>
+      <Canvas
+        frameloop={view === 'walk' ? 'always' : 'demand'}
+        shadows
+        dpr={[1, 2]}
+        gl={{ antialias: true, preserveDrawingBuffer: false }}
+        onPointerMissed={(e) => {
+          const s = useStore.getState();
+          const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y) > 5;
+          if (e.button === 0 && !moved && s.view !== 'walk' && !s.placing && !s.placingPerson && !s.measure && !useScene.getState().dragging) s.select([]);
+        }}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        <color attach="background" args={[bg]} />
+        <Suspense fallback={null}>
+          <Env />
+          <Lights project={project} version={version} />
+          <Cameras project={project} />
+          <group scale={S}>
+            <Room3D plan={project.plan} finishes={version.finishes} wallMode={show.walls} view={view} showCeiling={show.ceiling} />
+            <Interaction project={project} version={version} />
+            <Items project={project} version={version} issues={issues} />
+            {show.people && view !== 'walk' && <People project={project} version={version} />}
+            <SelectionOverlay project={project} version={version} />
+            <ClearanceZones project={project} version={version} />
+            <HeatmapLayer project={project} version={version} />
+            <Guides />
+            <GhostLayer project={project} />
+            <Measures />
+            <WalkTargetMarker />
+            <Labels project={project} version={version} />
+            <PlaneCatcher />
+            <FloorGrid project={project} />
+          </group>
+          <ShotTaker version={version} />
+          <ThumbRegistrar version={version} />
+          <CameraRig project={project} version={version} />
+        </Suspense>
+      </Canvas>
     </div>
   );
 }

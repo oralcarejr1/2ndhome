@@ -2,6 +2,7 @@ import { defaultElev, defaultMount } from '../catalog/products';
 import { nearestWall } from '../lib/analysis';
 import { anthro } from '../lib/ergonomics';
 import { bboxOf, deg2rad, normDeg, polyArea } from '../lib/geometry';
+import { findFreeSpot } from '../lib/snap';
 import { resolveParams } from '../models';
 import { requestCamera, useScene } from '../scene/sceneState';
 import { activeVersion, getProduct, useStore } from '../store/store';
@@ -28,7 +29,7 @@ function surfaceHost(p: Project, v: Version): PlacedItem | undefined {
   );
 }
 
-/** Place a product right away at a sensible spot and select it. */
+/** Place a product right away at a sensible non-overlapping spot and select it. */
 export function placeNow(productId: string) {
   const s = useStore.getState();
   const p = s.project!;
@@ -77,12 +78,36 @@ export function placeNow(productId: string) {
       x = w.pt[0] + w.n[0] * off;
       z = w.pt[1] + w.n[1] * off;
     }
+  } else if (mount === 'floor') {
+    const spot = findFreeSpot(p, v, prod, cx, cz, y, rot);
+    x = spot.x;
+    z = spot.z;
   }
   const id = s.addItem(productId, x, z, { rot, y });
   useStore.setState({ placing: null });
-  if (s.view === 'mood') s.setView('3d');
-  s.notify(`${prod.name} 배치됨 — 드래그해서 위치를 잡으세요`);
+  if (s.view === 'mood' || s.view === 'walk') s.setView('3d');
+  s.notify(`${prod.name} 배치됨 — 선택된 상태에서 드래그해 위치를 조절하세요`);
   return id;
+}
+
+/**
+ * Start placing a product from the catalog:
+ * - On desktop (mouse/trackpad): interactive ghost preview in 3D or 2D (follows cursor, snaps & aligns to walls).
+ * - On touch-only devices: instant non-overlapping placement via placeNow.
+ */
+export function beginPlace(productId: string) {
+  const s = useStore.getState();
+  const isTouchOnly = typeof window !== 'undefined' && window.matchMedia('(hover: none)').matches;
+  if (isTouchOnly) {
+    placeNow(productId);
+    return;
+  }
+  if (s.view === 'mood' || s.view === 'walk') s.setView('3d');
+  if (s.placing?.productId === productId) {
+    s.cancelPlacing();
+    return;
+  }
+  s.startPlacing(productId);
 }
 
 /** The person model the human panel controls (first person of the active profile). */

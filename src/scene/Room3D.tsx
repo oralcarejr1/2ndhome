@@ -68,8 +68,28 @@ function wallSegments(w: Wall, openings: Opening[], H: number): Seg[] {
   return segs;
 }
 
-function WallMesh({ w, plan, color, mode, center, extent }: { w: Wall; plan: FloorPlan; color: string; mode: Props['wallMode'] | 'walk'; center: THREE.Vector2; extent: number }) {
+function WallMesh({
+  w,
+  plan,
+  openings,
+  doorsOpen,
+  color,
+  mode,
+  center,
+  extent,
+}: {
+  w: Wall;
+  plan: FloorPlan;
+  openings: Opening[];
+  doorsOpen?: Record<string, boolean>;
+  color: string;
+  mode: Props['wallMode'] | 'walk';
+  center: THREE.Vector2;
+  extent: number;
+}) {
   const ref = useRef<THREE.Group>(null);
+  const openGroupRef = useRef<THREE.Group>(null);
+  const cutRef = useRef(false);
   const H = w.height ?? plan.ceiling;
   const L = dist(w.a, w.b);
   const ang = Math.atan2(w.b[1] - w.a[1], w.b[0] - w.a[0]);
@@ -80,15 +100,21 @@ function WallMesh({ w, plan, color, mode, center, extent }: { w: Wall; plan: Flo
   const mat = useMemo(() => new THREE.MeshStandardMaterial({ color, roughness: 0.92 }), [color]);
   const capMat = useMemo(() => new THREE.MeshStandardMaterial({ color: '#3a3632', roughness: 0.9 }), []);
   const lowH = 18;
-  const { camera } = useThree();
+  const { camera, invalidate } = useThree();
   const mid = useMemo(() => new THREE.Vector2((w.a[0] + w.b[0]) / 2, (w.a[1] + w.b[1]) / 2), [w]);
 
-  useFrame(() => {
+  useFrame((_, dt) => {
     if (!ref.current) return;
-    let h = 1;
-    if (mode === 'low') h = 100 / H;
-    else if (mode === 'hidden') h = lowH / H;
-    else if (mode === 'auto') {
+    let target = 1;
+    let hideOpenings = false;
+    if (mode === 'low') {
+      target = Math.min(1, 100 / H);
+      cutRef.current = false;
+    } else if (mode === 'hidden') {
+      target = lowH / H;
+      hideOpenings = true;
+      cutRef.current = true;
+    } else if (mode === 'auto') {
       const cam = new THREE.Vector2(camera.position.x * 100, camera.position.z * 100);
       const toCam = cam.clone().sub(center);
       const camDist = toCam.length();
@@ -96,40 +122,73 @@ function WallMesh({ w, plan, color, mode, center, extent }: { w: Wall; plan: Flo
         toCam.normalize();
         const s = mid.clone().sub(center).dot(toCam);
         const outside = camDist > extent * 0.9;
-        h = outside && s > extent * 0.25 ? lowH / H : 1;
+        // Hysteresis deadband prevents wall popping/flickering when orbiting near the threshold
+        if (cutRef.current) {
+          if (!outside || s < extent * 0.18) cutRef.current = false;
+        } else {
+          if (outside && s > extent * 0.28) cutRef.current = true;
+        }
       }
+      target = cutRef.current ? lowH / H : 1;
+      hideOpenings = cutRef.current;
+    } else {
+      cutRef.current = false;
     }
-    ref.current.scale.y = h;
+
+    const cur = ref.current.scale.y;
+    const diff = target - cur;
+    let next = target;
+    if (Math.abs(diff) > 0.004) {
+      next = cur + diff * Math.min(1, 1 - Math.exp(-18 * Math.min(dt, 0.05)));
+      invalidate();
+    }
+    ref.current.scale.y = next;
+
+    if (openGroupRef.current) {
+      openGroupRef.current.visible = !hideOpenings && next > 0.35;
+      openGroupRef.current.scale.y = mode === 'low' ? next : 1;
+    }
   });
 
+  const visibleOpenings = mode === 'low' ? openings.filter((o) => o.sill < 90) : openings;
+
   return (
-    <group ref={ref}>
-      {segs.map((s, i) => {
-        const a0 = s.s0 === 0 ? -ea : s.s0;
-        const a1 = s.s1 >= L - 0.01 ? L + eb : s.s1;
-        const len = a1 - a0;
-        const c = (a0 + a1) / 2;
-        const x = w.a[0] + dir[0] * c;
-        const z = w.a[1] + dir[1] * c;
-        return (
-          <mesh key={i} position={[x, (s.y0 + s.y1) / 2, z]} rotation={[0, -ang, 0]} castShadow receiveShadow material={mat} userData={{ wallId: w.id }}>
-            <boxGeometry args={[len, s.y1 - s.y0, w.thickness]} />
-          </mesh>
-        );
-      })}
-      {/* dark top cap for a crisp section look */}
-      {segs
-        .filter((s) => s.y1 >= H - 0.01)
-        .map((s, i) => {
+    <group>
+      <group ref={ref}>
+        {segs.map((s, i) => {
           const a0 = s.s0 === 0 ? -ea : s.s0;
           const a1 = s.s1 >= L - 0.01 ? L + eb : s.s1;
+          const len = a1 - a0;
           const c = (a0 + a1) / 2;
+          const x = w.a[0] + dir[0] * c;
+          const z = w.a[1] + dir[1] * c;
           return (
-            <mesh key={'c' + i} position={[w.a[0] + dir[0] * c, H + 0.2, w.a[1] + dir[1] * c]} rotation={[0, -ang, 0]} material={capMat} raycast={() => null}>
-              <boxGeometry args={[a1 - a0, 0.4, w.thickness + 0.2]} />
+            <mesh key={i} position={[x, (s.y0 + s.y1) / 2, z]} rotation={[0, -ang, 0]} castShadow receiveShadow material={mat} userData={{ wallId: w.id }}>
+              <boxGeometry args={[len, s.y1 - s.y0, w.thickness]} />
             </mesh>
           );
         })}
+        {/* dark top cap for a crisp section look */}
+        {segs
+          .filter((s) => s.y1 >= H - 0.01)
+          .map((s, i) => {
+            const a0 = s.s0 === 0 ? -ea : s.s0;
+            const a1 = s.s1 >= L - 0.01 ? L + eb : s.s1;
+            const c = (a0 + a1) / 2;
+            return (
+              <mesh key={'c' + i} position={[w.a[0] + dir[0] * c, H + 0.2, w.a[1] + dir[1] * c]} rotation={[0, -ang, 0]} material={capMat} raycast={() => null}>
+                <boxGeometry args={[a1 - a0, 0.4, w.thickness + 0.2]} />
+              </mesh>
+            );
+          })}
+      </group>
+      {visibleOpenings.length > 0 && (
+        <group ref={openGroupRef}>
+          {visibleOpenings.map((o) => (
+            <OpeningMesh key={o.id} o={o} plan={plan} open={doorsOpen?.[o.id] ?? false} />
+          ))}
+        </group>
+      )}
     </group>
   );
 }
@@ -357,10 +416,17 @@ export function Room3D({ plan, finishes, wallMode, view, showCeiling }: Props) {
         <mesh key={f.id} geometry={f.g} material={f.mat} receiveShadow userData={{ floor: true }} />
       ))}
       {plan.walls.map((w) => (
-        <WallMesh key={w.id} w={w} plan={plan} color={finishes.wallColors[w.id] ?? finishes.wallColor} mode={effMode as Props['wallMode']} center={center} extent={extent} />
-      ))}
-      {plan.openings.map((o) => (
-        <OpeningMesh key={o.id} o={o} plan={plan} open={finishes.doorsOpen?.[o.id] ?? false} />
+        <WallMesh
+          key={w.id}
+          w={w}
+          plan={plan}
+          openings={plan.openings.filter((o) => o.wallId === w.id)}
+          doorsOpen={finishes.doorsOpen}
+          color={finishes.wallColors[w.id] ?? finishes.wallColor}
+          mode={effMode as Props['wallMode']}
+          center={center}
+          extent={extent}
+        />
       ))}
       <SwingArcs plan={plan} />
       {(showCeiling || view === 'walk') && (
