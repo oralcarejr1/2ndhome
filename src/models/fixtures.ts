@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { ParamValue } from '../types';
 import { getMaterial } from '../lib/materials';
 import { screenTexture } from '../lib/textures';
 import { bb, bool, box, cyl, GenCtx, lathe, ModelDef, num, opts, plane, rbb, rbox, rod, sphere, str, torus } from './parts';
@@ -8,6 +9,39 @@ const dark = () => getMaterial({ kind: 'plastic', color: '#1d1d1f' });
 const steel = () => getMaterial({ kind: 'chrome', color: '#c9ccd0' });
 
 // ---------------------------------------------------------------- Appliances
+/** Minimum clearances a built-in-style refrigerator needs inside its cabinet (cm). */
+export const FRIDGE_SIDE_GAP = 0.4;
+export const FRIDGE_TOP_GAP = 2;
+const MIN_UPPER = 5;
+
+/** Where a real-size refrigerator sits inside a cabinet of w × d × h, and whether it fits. */
+export function fridgeEnclosureLayout(w: number, d: number, h: number, p: Record<string, ParamValue>) {
+  const t = Math.min(1.8, w / 8, d / 8, h / 12);
+  const fw = num(p, 'fridgeW', 59.5);
+  const fh = num(p, 'fridgeH', 185.3);
+  const fd = num(p, 'fridgeD', 66.9);
+  const sideGap = (w - 2 * t - fw) / 2;
+  const shelfY = fh + FRIDGE_TOP_GAP;
+  const upperClear = h - t - (shelfY + t);
+  const hasUpper = upperClear >= MIN_UPPER;
+  const topGap = hasUpper ? FRIDGE_TOP_GAP : h - t - fh;
+  const eps = 1e-6;
+  return {
+    t,
+    fw,
+    fh,
+    fd,
+    sideGap,
+    topGap,
+    shelfY,
+    hasUpper,
+    upperClear: hasUpper ? upperClear : 0,
+    fitsW: sideGap >= FRIDGE_SIDE_GAP - eps,
+    fitsH: topGap >= FRIDGE_TOP_GAP - eps,
+    fitsD: fd <= d + eps,
+  };
+}
+
 function buildAppliance(c: GenCtx) {
   const { w, d, h, p } = c;
   const g = new THREE.Group();
@@ -16,18 +50,22 @@ function buildAppliance(c: GenCtx) {
   const kind = str(p, 'kind', 'fridge');
   const gap = 0.4;
   if (kind === 'fridge' && bool(p, 'enclosure', false)) {
-    const t = Math.min(1.8, w / 8, d / 8, h / 12);
-    const upperH = Math.min(Math.max(t * 3, num(p, 'upperH', 40)), h * 0.8);
-    const fridgeH = h - upperH;
+    // Overall dimensions are the cabinet; the refrigerator keeps its own real size inside it.
+    const L = fridgeEnclosureLayout(w, d, h, p);
+    const { t } = L;
     const cabinet = c.mat('enclosure');
-    // Overall dimensions include the full-height side panels and one upper compartment.
     bb(g, -w / 2, 0, -d / 2, -w / 2 + t, h, d / 2, cabinet);
     bb(g, w / 2 - t, 0, -d / 2, w / 2, h, d / 2, cabinet);
     bb(g, -w / 2 + t, h - t, -d / 2, w / 2 - t, h, d / 2, cabinet);
-    bb(g, -w / 2 + t, fridgeH, -d / 2, w / 2 - t, fridgeH + t, d / 2, cabinet);
-    bb(g, -w / 2 + t, fridgeH + t, -d / 2, w / 2 - t, h - t, -d / 2 + t / 3, cabinet);
-    bb(g, -w / 2 + t + 0.2, fridgeH + t + 0.2, d / 2 - t, w / 2 - t - 0.2, h - t - 0.2, d / 2, cabinet);
-    g.add(buildAppliance({ ...c, w: w - 2 * t, h: fridgeH, p: { ...p, enclosure: false } }));
+    if (L.hasUpper) {
+      bb(g, -w / 2 + t, L.shelfY, -d / 2, w / 2 - t, L.shelfY + t, d / 2, cabinet);
+      bb(g, -w / 2 + t, L.shelfY + t, -d / 2, w / 2 - t, h - t, -d / 2 + t / 3, cabinet);
+      bb(g, -w / 2 + t + 0.2, L.shelfY + t + 0.2, d / 2 - t, w / 2 - t - 0.2, h - t - 0.2, d / 2, cabinet);
+    }
+    const fridge = buildAppliance({ ...c, w: L.fw, d: L.fd, h: L.fh, p: { ...p, enclosure: false } });
+    // Door faces line up with the cabinet front.
+    fridge.position.z = d / 2 - L.fd / 2;
+    g.add(fridge);
     return g;
   }
   switch (kind) {
@@ -169,10 +207,12 @@ export const applianceDef: ModelDef = {
         ['box', '기타(상자형)'],
       ),
     },
-    { key: 'doors', label: '냉장고 도어', type: 'select', default: '2', options: opts(['1', '1도어'], ['2', '2도어(상냉장 하냉동)'], ['side', '양문형'], ['4', '4도어']) },
-    { key: 'enclosure', label: '냉장고 붙박이장 · 상부 수납칸', type: 'bool', default: false },
-    { key: 'upperH', label: '상부 수납칸 높이 (전체 높이에 포함)', type: 'number', default: 40, min: 5, max: 120, unit: 'cm' },
-    { key: 'round', label: '원통형(청정기)', type: 'bool', default: true },
+    { key: 'doors', label: '냉장고 도어', type: 'select', default: '2', options: opts(['1', '1도어'], ['2', '2도어(상냉장 하냉동)'], ['side', '양문형'], ['4', '4도어']), when: { kind: ['fridge'] } },
+    { key: 'enclosure', label: '냉장고장 안에 설치 (치수 = 장 바깥 크기)', type: 'bool', default: false, when: { kind: ['fridge'] } },
+    { key: 'fridgeW', label: '장 안 냉장고 폭', type: 'number', default: 59.5, min: 30, max: 150, step: 0.1, unit: 'cm', when: { kind: ['fridge'], enclosure: [true] } },
+    { key: 'fridgeH', label: '장 안 냉장고 높이', type: 'number', default: 185.3, min: 50, max: 250, step: 0.1, unit: 'cm', when: { kind: ['fridge'], enclosure: [true] } },
+    { key: 'fridgeD', label: '장 안 냉장고 깊이', type: 'number', default: 66.9, min: 30, max: 120, step: 0.1, unit: 'cm', when: { kind: ['fridge'], enclosure: [true] } },
+    { key: 'round', label: '원통형(청정기)', type: 'bool', default: true, when: { kind: ['purifier'] } },
   ],
   build: buildAppliance,
 };

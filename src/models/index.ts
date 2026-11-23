@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { getMaterial } from '../lib/materials';
-import type { MatSpec, ParamValue, PlacedItem, Product } from '../types';
+import type { MatSpec, ParamDef, ParamValue, PlacedItem, Product } from '../types';
 import { activityDef, applianceDef, bathDef, kitchenDef, screenDef } from './fixtures';
 import { blockDef, curtainDef, decorDef, frameDef, lampDef, mirrorDef, plantDef, rugDef } from './living';
 import type { ModelDef } from './parts';
@@ -48,6 +48,11 @@ export function resolveParams(p: Product, it?: PlacedItem): Record<string, Param
   if (def) for (const pd of def.params) out[pd.key] = pd.default;
   Object.assign(out, p.params ?? {}, it?.params ?? {});
   return out;
+}
+
+/** Whether a param control applies to the current values (e.g. fridge-only options). */
+export function paramVisible(pd: ParamDef, params: Record<string, ParamValue>) {
+  return !pd.when || Object.entries(pd.when).every(([k, vals]) => vals.includes(params[k]));
 }
 
 export function resolveMats(p: Product, it?: PlacedItem): Record<string, MatSpec> {

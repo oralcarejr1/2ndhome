@@ -20,10 +20,11 @@ import { PRODUCTS, productSearchUrl } from '../catalog/products';
 import { nearestWall, resolveItems, sideGaps } from '../lib/analysis';
 import { anthro } from '../lib/ergonomics';
 import { fmtWon, itemAxes, localToWorld, normDeg, uid } from '../lib/geometry';
-import { MODELS, resolveMats, resolveParams } from '../models';
+import { MODELS, paramVisible, resolveMats, resolveParams } from '../models';
+import { fridgeEnclosureLayout } from '../models/fixtures';
 import { useIssues } from '../scene/Viewport';
 import { activeVersion, getProduct, useStore } from '../store/store';
-import type { FloorKind, Mount, PlacedItem, PlacedPerson, Pose, Product } from '../types';
+import type { FloorKind, Mount, ParamValue, PlacedItem, PlacedPerson, Pose, Product } from '../types';
 import { testWithHuman } from './actions';
 import { MatInput, Num, ParamInput } from './common';
 
@@ -669,10 +670,13 @@ function ItemInspector({ it }: { it: PlacedItem }) {
                 )}
               </div>
               <div className="grid2">
-                {def.params.map((pd) => (
-                  <ParamInput key={pd.key} def={pd} value={params[pd.key]} onChange={(val) => up((x) => (x.params = { ...(x.params ?? {}), [pd.key]: val }))} />
-                ))}
+                {def.params
+                  .filter((pd) => paramVisible(pd, params))
+                  .map((pd) => (
+                    <ParamInput key={pd.key} def={pd} value={params[pd.key]} onChange={(val) => up((x) => (x.params = { ...(x.params ?? {}), [pd.key]: val }))} />
+                  ))}
               </div>
+              {prod.model === 'appliance' && params.kind === 'fridge' && params.enclosure === true && <FridgeFit dims={dims} params={params} />}
             </div>
           )}
 
@@ -927,5 +931,23 @@ function PersonInspector({ h }: { h: PlacedPerson }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function FridgeFit({ dims, params }: { dims: { w: number; d: number; h: number }; params: Record<string, ParamValue> }) {
+  const L = fridgeEnclosureLayout(dims.w, dims.d, dims.h, params);
+  const cm = (v: number) => `${Math.round(v * 10) / 10}cm`;
+  const problems = [
+    !L.fitsW && `폭: 좌우 틈이 각 ${cm(L.sideGap)}예요 (최소 0.4cm 필요)`,
+    !L.fitsH && `높이: 상단 여유가 ${cm(L.topGap)}예요 (최소 2cm 필요)`,
+    !L.fitsD && `깊이: 냉장고가 장보다 ${cm(L.fd - dims.d)} 깊어요`,
+  ].filter(Boolean) as string[];
+  return (
+    <>
+      <p className="note">
+        냉장고 {L.fw}×{L.fh}×{L.fd}cm · 좌우 틈 각 {cm(L.sideGap)} · {L.hasUpper ? `상부 수납칸 안쪽 높이 ${cm(L.upperClear)}` : '상부 수납칸 없음'}
+      </p>
+      {problems.length > 0 && <div className="callout warn">냉장고가 장에 안 들어가요. {problems.join(' · ')}</div>}
+    </>
   );
 }
