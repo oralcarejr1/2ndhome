@@ -8,7 +8,6 @@ import {
   FlipHorizontal,
   Group,
   Lock,
-  PencilRuler,
   RotateCcw,
   RotateCw,
   Trash2,
@@ -66,7 +65,7 @@ export function moodColorsOf(p: { moodboard: { palette?: string[]; color?: strin
   return Array.from(new Set(p.moodboard.flatMap((r) => r.palette ?? (r.color ? [r.color] : [])).map((c) => c.toLowerCase())));
 }
 
-export function Inspector({ onEditPlan }: { onEditPlan: () => void }) {
+export function Inspector() {
   const project = useStore((s) => s.project)!;
   const selection = useStore((s) => s.selection);
   const v = activeVersion(project)!;
@@ -81,14 +80,14 @@ export function Inspector({ onEditPlan }: { onEditPlan: () => void }) {
       ) : items.length > 1 ? (
         <MultiInspector ids={selection} />
       ) : (
-        <RoomSettings onEditPlan={onEditPlan} />
+        <RoomSettings />
       )}
     </div>
   );
 }
 
 // ------------------------------------------------------------------ room finishes (nothing selected)
-function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
+function RoomSettings() {
   const project = useStore((s) => s.project)!;
   const v = activeVersion(project)!;
   const mutateVersion = useStore((s) => s.mutateVersion);
@@ -229,12 +228,11 @@ function RoomSettings({ onEditPlan }: { onEditPlan: () => void }) {
         </div>
       )}
 
-      <div className="insp-section">
-        <button className="btn-secondary full-width" onClick={onEditPlan}>
-          <PencilRuler size={13} /> 2D 도면 편집 열기
-        </button>
-        {project.info?.planNote && <p className="mini-note">{project.info.planNote}</p>}
-      </div>
+      {project.info?.planNote && (
+        <div className="insp-section">
+          <p className="mini-note" style={{ marginTop: 0 }}>{project.info.planNote}</p>
+        </div>
+      )}
     </div>
   );
 }
