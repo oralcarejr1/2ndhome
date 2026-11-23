@@ -15,6 +15,21 @@ function buildAppliance(c: GenCtx) {
   const panel = c.mat('panel');
   const kind = str(p, 'kind', 'fridge');
   const gap = 0.4;
+  if (kind === 'fridge' && bool(p, 'enclosure', false)) {
+    const t = Math.min(1.8, w / 8, d / 8, h / 12);
+    const upperH = Math.min(Math.max(t * 3, num(p, 'upperH', 40)), h * 0.8);
+    const fridgeH = h - upperH;
+    const cabinet = c.mat('enclosure');
+    // Overall dimensions include the full-height side panels and one upper compartment.
+    bb(g, -w / 2, 0, -d / 2, -w / 2 + t, h, d / 2, cabinet);
+    bb(g, w / 2 - t, 0, -d / 2, w / 2, h, d / 2, cabinet);
+    bb(g, -w / 2 + t, h - t, -d / 2, w / 2 - t, h, d / 2, cabinet);
+    bb(g, -w / 2 + t, fridgeH, -d / 2, w / 2 - t, fridgeH + t, d / 2, cabinet);
+    bb(g, -w / 2 + t, fridgeH + t, -d / 2, w / 2 - t, h - t, -d / 2 + t / 3, cabinet);
+    bb(g, -w / 2 + t + 0.2, fridgeH + t + 0.2, d / 2 - t, w / 2 - t - 0.2, h - t - 0.2, d / 2, cabinet);
+    g.add(buildAppliance({ ...c, w: w - 2 * t, h: fridgeH, p: { ...p, enclosure: false } }));
+    return g;
+  }
   switch (kind) {
     case 'fridge': {
       const doors = str(p, 'doors', '2');
@@ -129,6 +144,7 @@ export const applianceDef: ModelDef = {
   slots: {
     body: { label: '본체', def: { kind: 'lacquer', color: '#e9e7e2' } },
     panel: { label: '도어/패널', def: { kind: 'lacquer', color: '#dedad3' } },
+    enclosure: { label: '붙박이장', def: { kind: 'lacquer', color: '#efede8' } },
   },
   params: [
     {
@@ -154,6 +170,8 @@ export const applianceDef: ModelDef = {
       ),
     },
     { key: 'doors', label: '냉장고 도어', type: 'select', default: '2', options: opts(['1', '1도어'], ['2', '2도어(상냉장 하냉동)'], ['side', '양문형'], ['4', '4도어']) },
+    { key: 'enclosure', label: '냉장고 붙박이장 · 상부 수납칸', type: 'bool', default: false },
+    { key: 'upperH', label: '상부 수납칸 높이 (전체 높이에 포함)', type: 'number', default: 40, min: 5, max: 120, unit: 'cm' },
     { key: 'round', label: '원통형(청정기)', type: 'bool', default: true },
   ],
   build: buildAppliance,
