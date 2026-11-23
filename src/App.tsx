@@ -44,6 +44,7 @@ import { fmtWon, itemAxes, normDeg, polyArea } from './lib/geometry';
 import { resolveMats } from './models';
 import { requestCamera, useScene } from './scene/sceneState';
 import { Viewport } from './scene/Viewport';
+import { ViewportBoundary } from './scene/ViewportBoundary';
 import { activeVersion, getProduct, syncText, useStore } from './store/store';
 import type { PlacedItem, Pose, Product } from './types';
 import { mainAvatar, testWithHuman, updateAvatar } from './ui/actions';
@@ -212,7 +213,9 @@ function Studio() {
     <div className="studio-root">
       <main className="center-stage">
         <div style={{ position: 'absolute', inset: 0, display: stage3d ? 'block' : 'none' }}>
-          <Viewport />
+          <ViewportBoundary onOpenPlan={() => setView('2d')}>
+            <Viewport />
+          </ViewportBoundary>
         </div>
         {view === '2d' && <PlanEditor editing={editPlan} onToggleEdit={toggleEditPlan} panelEl={planPanelEl} />}
         {view === 'mood' && <Moodboard />}
