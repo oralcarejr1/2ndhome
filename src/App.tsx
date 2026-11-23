@@ -276,12 +276,7 @@ function Studio() {
             ) : planEditActive ? (
               <div className="panel-scroll" ref={setPlanPanelEl} />
             ) : (
-              <Inspector
-                onEditPlan={() => {
-                  setView('2d');
-                  toggleEditPlan(true);
-                }}
-              />
+              <Inspector />
             )}
           </aside>
         )}
