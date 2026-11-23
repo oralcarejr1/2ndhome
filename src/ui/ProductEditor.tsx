@@ -12,7 +12,7 @@ import {
   type ImportedProduct,
   type ImportedProductOption,
 } from '../lib/productImport';
-import { MODELS, resolveMats, resolveParams } from '../models';
+import { MODELS, paramVisible, resolveMats, resolveParams } from '../models';
 import { STAGE_COLORS } from '../lib/theme';
 import { buildPerson } from '../models/person';
 import { ItemModel } from '../scene/ItemMesh';
@@ -721,14 +721,16 @@ export function ProductEditor({ base, importUrl, onClose }: { base?: Product; im
             <>
               <div className="insp-label" style={{ marginTop: 12 }}>형태 세부</div>
               <div className="grid2">
-                {def.params.map((pd) => (
-                  <ParamInput
-                    key={pd.key}
-                    def={pd}
-                    value={p.params?.[pd.key] ?? pd.default}
-                    onChange={(v) => setP({ ...p, params: { ...(p.params ?? {}), [pd.key]: v } })}
-                  />
-                ))}
+                {def.params
+                  .filter((pd) => paramVisible(pd, resolveParams(p)))
+                  .map((pd) => (
+                    <ParamInput
+                      key={pd.key}
+                      def={pd}
+                      value={p.params?.[pd.key] ?? pd.default}
+                      onChange={(v) => setP({ ...p, params: { ...(p.params ?? {}), [pd.key]: v } })}
+                    />
+                  ))}
               </div>
             </>
           )}

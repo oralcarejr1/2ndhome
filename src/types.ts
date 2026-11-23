@@ -42,6 +42,8 @@ export interface ParamDef {
   step?: number;
   unit?: string;
   options?: { value: string; label: string }[];
+  /** Show the control only while every listed param has one of these values. */
+  when?: Record<string, ParamValue[]>;
 }
 
 export type Mount = 'floor' | 'wall' | 'ceiling' | 'surface';

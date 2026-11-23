@@ -270,6 +270,7 @@ const BASE_PRODUCTS: Product[] = [
 
   // ------------------------------------------------------------ APPLIANCES
   P('gen-fridge-s', '냉장고 (2도어 300L급)', GEN, 'appliance', 'appliance', [60, 66, 170], { sub: '냉장고', p: { kind: 'fridge', doors: '2' }, clearance: { front: 90 }, approx: true }),
+  P('gen-fridge-slim-2', '빌트인형 슬림 2도어 냉장고 (333L급)', GEN, 'appliance', 'appliance', [59.5, 66.9, 185.3], { sub: '냉장고', p: { kind: 'fridge', doors: '2' }, clearance: { front: 90 }, approx: true }),
   P('gen-fridge-1', '소형 냉장고 (1도어)', GEN, 'appliance', 'appliance', [50, 55, 85], { sub: '냉장고', p: { kind: 'fridge', doors: '1' }, clearance: { front: 70 }, approx: true }),
   P('gen-fridge-4', '4도어 냉장고 (870L급)', GEN, 'appliance', 'appliance', [91.2, 93, 185.3], { sub: '냉장고', p: { kind: 'fridge', doors: '4' }, clearance: { front: 100 }, approx: true }),
   P('gen-kimchi', '스탠드 김치냉장고', GEN, 'appliance', 'appliance', [70, 80, 185], { sub: '김치냉장고', p: { kind: 'fridge', doors: '4' }, clearance: { front: 90 }, approx: true }),
