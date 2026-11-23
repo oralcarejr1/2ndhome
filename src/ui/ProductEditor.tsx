@@ -13,6 +13,7 @@ import {
   type ImportedProductOption,
 } from '../lib/productImport';
 import { MODELS, resolveMats, resolveParams } from '../models';
+import { STAGE_COLORS } from '../lib/theme';
 import { buildPerson } from '../models/person';
 import { ItemModel } from '../scene/ItemMesh';
 import { storeFile } from '../store/persistence';
@@ -51,12 +52,12 @@ async function resizeImageToDataUrl(file: Blob): Promise<string> {
 
 function Preview({ p, height }: { p: Product; height: number }) {
   const theme = useStore((s) => s.theme);
-  const dark = theme === 'dark';
+  const st = STAGE_COLORS[theme];
   const span = Math.max(p.dims.w, p.dims.d, p.dims.h, 120) / 100;
   const person = useMemo(() => buildPerson(height, 'stand', '#e8a17a'), [height]);
   return (
     <Canvas camera={{ position: [span * 1.2, span * 0.9, span * 1.6], fov: 40 }} shadows>
-      <color attach="background" args={[dark ? '#1f2126' : '#ece8e0']} />
+      <color attach="background" args={[st.canvasDay]} />
       <hemisphereLight args={['#ffffff', '#b9a98f', 0.9]} />
       <directionalLight position={[3, 5, 4]} intensity={1.4} castShadow />
       <group scale={0.01}>
@@ -64,9 +65,9 @@ function Preview({ p, height }: { p: Product; height: number }) {
         <primitive object={person} position={[p.dims.w / 2 + 35, 0, 0]} />
         <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
           <planeGeometry args={[1000, 1000]} />
-          <meshStandardMaterial color={dark ? '#262930' : '#e2ddd5'} />
+          <meshStandardMaterial color={st.previewFloor} />
         </mesh>
-        <gridHelper key={theme} args={[1000, 20, dark ? '#3e424c' : '#c9c1b5', dark ? '#2e323a' : '#d8d1c7']} position={[0, 0.2, 0]} />
+        <gridHelper key={theme} args={[1000, 20, st.previewGridMajor, st.previewGridMinor]} position={[0, 0.2, 0]} />
       </group>
       <OrbitControls target={[0, (p.dims.h / 200) * 0.9, 0]} makeDefault />
     </Canvas>

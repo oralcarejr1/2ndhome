@@ -9,6 +9,7 @@ import { anthro } from '../lib/ergonomics';
 import { bboxOf, deg2rad, localToWorld, normDeg, pointInPoly, rad2deg, snap as snapTo } from '../lib/geometry';
 import { setLampGlow } from '../lib/materials';
 import { effectiveItemDims, snapFloorItem } from '../lib/snap';
+import { stagePalette } from '../lib/theme';
 import { resolveParams } from '../models';
 import { buildPerson } from '../models/person';
 import { activeVersion, getProduct, useStore } from '../store/store';
@@ -1597,8 +1598,8 @@ function FloorGrid({ project }: { project: Project }) {
   if (!on) return null;
   const b = planBounds(project);
   const size = Math.ceil(Math.max(b.maxX - b.minX, b.maxY - b.minY) / 50) * 50 + 100;
-  const [c1, c2] = theme === 'dark' ? ['#3a3e47', '#2b2e36'] : ['#beb7ac', '#dbd5cb'];
-  return <gridHelper key={theme} args={[size, size / 50, c1, c2]} position={[(b.minX + b.maxX) / 2, 0.5, (b.minY + b.maxY) / 2]} />;
+  const { gridMajor, gridMinor } = stagePalette(theme, 12);
+  return <gridHelper key={theme} args={[size, size / 50, gridMajor, gridMinor]} position={[(b.minX + b.maxX) / 2, 0.5, (b.minY + b.maxY) / 2]} />;
 }
 
 /** On-demand thumbnail capture (called on version switch/save/compare or tab hide — zero 2.5s editing stutter). */
@@ -1683,8 +1684,7 @@ export function Viewport() {
   const version = activeVersion(project);
   const issues = useMemo(() => (project && version ? computeIssues(project, version) : new Map()), [project?.plan, version, project?.customProducts]);
   if (!project || !version) return null;
-  const day = version.finishes.hour > 6 && version.finishes.hour < 19;
-  const bg = theme === 'dark' ? (day ? '#1f2126' : '#14161b') : day ? '#ece8e0' : '#1e222b';
+  const { bg } = stagePalette(theme, version.finishes.hour);
   return (
     <div
       className="canvas-wrap"
