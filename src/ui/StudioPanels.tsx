@@ -773,6 +773,11 @@ export function VersionsPanel({ onCompare }: { onCompare: () => void }) {
               서버 저장소 오류: {syncError}
             </div>
           )}
+          {sync === 'server' && (
+            <button className="btn-secondary full-width" onClick={() => void useStore.getState().syncNow()}>
+              서버에 다시 저장
+            </button>
+          )}
           <button className="btn-xs full-width" style={{ marginTop: 6 }} onClick={() => void logout()}>
             이 기기에서 로그아웃
           </button>
