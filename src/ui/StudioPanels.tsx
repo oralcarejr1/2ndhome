@@ -29,6 +29,7 @@ import { productSearchUrl } from '../catalog/products';
 import { computeIssues, resolveItems } from '../lib/analysis';
 import { anthro, ideals } from '../lib/ergonomics';
 import { fmtWon, uid } from '../lib/geometry';
+import { STAGE_COLORS } from '../lib/theme';
 import { requestCamera, useScene } from '../scene/sceneState';
 import { putBlob } from '../store/persistence';
 import { activeVersion, getProduct, syncText, useStore } from '../store/store';
@@ -428,9 +429,9 @@ export function MiniPlan({ v }: { v: Version }) {
   const h = Math.max(...ys) - y0 + 10;
   const dark = theme === 'dark';
   return (
-    <svg viewBox={`${x0} ${y0} ${w} ${h}`} style={{ width: '100%', height: '100%', display: 'block', background: dark ? '#1f2126' : '#ece8e0' }} preserveAspectRatio="xMidYMid meet">
+    <svg viewBox={`${x0} ${y0} ${w} ${h}`} style={{ width: '100%', height: '100%', display: 'block', background: STAGE_COLORS[theme].canvasDay }} preserveAspectRatio="xMidYMid meet">
       {project.plan.rooms.map((r) => (
-        <polygon key={r.id} points={r.points.map((p) => p.join(',')).join(' ')} fill={dark ? 'rgba(216,191,152,0.16)' : '#e2d3ba'} />
+        <polygon key={r.id} points={r.points.map((p) => p.join(',')).join(' ')} fill={dark ? 'rgba(216,191,152,0.16)' : '#eee5d6'} />
       ))}
       {res
         .filter((r) => r.prod.mount !== 'ceiling')

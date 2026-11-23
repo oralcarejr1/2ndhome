@@ -33,6 +33,7 @@
   --good-border: rgba(56, 185, 129, 0.28);
   --tag-bg: rgba(24, 26, 30, 0.88);
   --tag-border: rgba(255, 255, 255, 0.12);
+  --backdrop: rgba(10, 12, 16, 0.62);
   /* legacy compatibility aliases mapped to unified single-accent palette */
   --sage: var(--accent);
   --sage-soft: var(--accent-soft);
@@ -47,13 +48,13 @@
 
 [data-theme='light'] {
   color-scheme: light;
-  --canvas: #ece8e0;
-  --bg: #f3f0ea;
-  --panel: rgba(252, 251, 249, 0.92);
-  --panel-solid: #fcfbf9;
-  --surface: #fcfbf9;
-  --surface-soft: #f3f0ea;
-  --surface-hover: #eae5dc;
+  --canvas: #f8f8f6;
+  --bg: #fafafa;
+  --panel: rgba(255, 255, 255, 0.94);
+  --panel-solid: #ffffff;
+  --surface: #ffffff;
+  --surface-soft: #f4f4f1;
+  --surface-hover: #ecece8;
   --border: rgba(24, 22, 19, 0.10);
   --border-strong: rgba(24, 22, 19, 0.20);
   --ink: #171614;
@@ -73,8 +74,9 @@
   --good: #1f6f4a;
   --good-bg: rgba(31, 111, 74, 0.10);
   --good-border: rgba(31, 111, 74, 0.24);
-  --tag-bg: rgba(252, 251, 249, 0.90);
+  --tag-bg: rgba(255, 255, 255, 0.94);
   --tag-border: rgba(24, 22, 19, 0.12);
+  --backdrop: rgba(24, 22, 19, 0.34);
   --shadow-sm: 0 2px 8px rgba(20, 18, 15, 0.06);
   --shadow-md: 0 10px 30px rgba(20, 18, 15, 0.10), 0 1px 2px rgba(20, 18, 15, 0.05);
 }
@@ -3183,7 +3185,7 @@ details.more[open] > summary {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(10, 12, 16, 0.62);
+  background: var(--backdrop);
   backdrop-filter: blur(6px);
   display: flex;
   align-items: center;

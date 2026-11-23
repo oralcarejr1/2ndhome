@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { doorSwingPoly } from '../lib/analysis';
 import { bboxOf, dist, norm, sub } from '../lib/geometry';
 import { floorTexture } from '../lib/textures';
+import { stagePalette } from '../lib/theme';
 import { useStore } from '../store/store';
 import type { Finishes, FloorPlan, Opening, Wall } from '../types';
 
@@ -313,7 +314,7 @@ const SLAB_H = 10;
 
 export function Room3D({ plan, finishes, wallMode, view, showCeiling }: Props) {
   const theme = useStore((s) => s.theme);
-  const darkStage = theme === 'dark' || finishes.hour <= 6 || finishes.hour >= 19;
+  const stage = stagePalette(theme, finishes.hour);
   const all = plan.rooms.flatMap((r) => r.points).concat(plan.walls.flatMap((w) => [w.a, w.b]));
   const bb = all.length ? bboxOf(all) : { minX: 0, minY: 0, maxX: 400, maxY: 400 };
   const center = useMemo(() => new THREE.Vector2((bb.minX + bb.maxX) / 2, (bb.minY + bb.maxY) / 2), [bb.minX, bb.minY, bb.maxX, bb.maxY]);
@@ -377,8 +378,8 @@ export function Room3D({ plan, finishes, wallMode, view, showCeiling }: Props) {
   );
 
   const slabMat = useMemo(
-    () => new THREE.MeshStandardMaterial({ color: darkStage ? '#2d3038' : '#d5cfc4', roughness: 0.94 }),
-    [darkStage],
+    () => new THREE.MeshStandardMaterial({ color: stage.slab, roughness: 0.94 }),
+    [stage.slab],
   );
 
   const ceilingGeo = useMemo(() => {
@@ -410,7 +411,7 @@ export function Room3D({ plan, finishes, wallMode, view, showCeiling }: Props) {
       {/* transparent shadow catcher directly onto the studio backdrop */}
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[center.x, -SLAB_H - 0.4, center.y]} receiveShadow raycast={() => null}>
         <planeGeometry args={[bb.maxX - bb.minX + 600, bb.maxY - bb.minY + 600]} />
-        <shadowMaterial transparent opacity={darkStage ? 0.34 : 0.14} color="#000000" depthWrite={false} />
+        <shadowMaterial transparent opacity={stage.shadowOpacity} color="#000000" depthWrite={false} />
       </mesh>
       {floors.map((f) => (
         <mesh key={f.id} geometry={f.g} material={f.mat} receiveShadow userData={{ floor: true }} />
