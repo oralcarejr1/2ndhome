@@ -286,7 +286,10 @@ export const useStore = create<State>((set, get) => {
       await setSync(p.id, { etag: r.etag, dirty: false, base: p });
       return 'ok';
     }
-    if (!r.conflict) return 'error';
+    if (!r.conflict) {
+      set({ syncError: r.error });
+      return 'error';
+    }
     const remote = await srvGet(p.id);
     if (!remote) {
       // gone from the server (deleted elsewhere) while edited here → put it back
@@ -337,14 +340,15 @@ export const useStore = create<State>((set, get) => {
     let res: 'ok' | 'merged' | 'error' = 'error';
     try {
       res = await pushProject(p);
-    } catch {
+    } catch (e) {
+      set({ syncError: e instanceof Error ? e.message : '서버에 저장할 수 없어요' });
       res = 'error';
     }
     pushing = false;
     const cur = get().project;
     const changed = !!cur && cur.id === p.id && JSON.stringify(cur) !== sent && res === 'ok';
     if (changed) await markDirty(p.id);
-    set({ saveState: res === 'error' ? 'error' : 'saved' });
+    set({ saveState: res === 'error' ? 'error' : 'saved', ...(res !== 'error' ? { syncError: undefined } : {}) });
     if (res === 'error') {
       // offline or server hiccup: edits stay on this device (marked dirty) and are retried
       setTimeout(() => peekSync(p.id)?.dirty && schedulePush(true), 20000);

@@ -16,7 +16,7 @@ export interface RemoteEntry {
   etag: string;
   at: number;
 }
-export type PutResult = { ok: true; etag: string } | { ok: false; conflict: true } | { ok: false; conflict: false; status: number };
+export type PutResult = { ok: true; etag: string } | { ok: false; conflict: true } | { ok: false; conflict: false; status: number; error: string };
 
 const W = { 'x-2ndhome': '1' };
 let onAuthLost: (() => void) | null = null;
@@ -112,9 +112,9 @@ export async function srvPut(p: Project, base: string | 'none'): Promise<PutResu
     });
     if (r.ok) return { ok: true, etag: ((await r.json()) as { etag: string }).etag };
     if (r.status === 409) return { ok: false, conflict: true };
-    return { ok: false, conflict: false, status: r.status };
-  } catch {
-    return { ok: false, conflict: false, status: 0 };
+    return { ok: false, conflict: false, status: r.status, error: `서버 저장 요청 실패 (HTTP ${r.status})` };
+  } catch (e) {
+    return { ok: false, conflict: false, status: 0, error: e instanceof Error ? e.message : '서버에 연결할 수 없어요' };
   }
 }
 
