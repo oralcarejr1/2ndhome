@@ -673,10 +673,23 @@ function ItemInspector({ it }: { it: PlacedItem }) {
                 {def.params
                   .filter((pd) => paramVisible(pd, params))
                   .map((pd) => (
-                    <ParamInput key={pd.key} def={pd} value={params[pd.key]} onChange={(val) => up((x) => (x.params = { ...(x.params ?? {}), [pd.key]: val }))} />
+                    <ParamInput
+                      key={pd.key}
+                      def={pd}
+                      value={params[pd.key]}
+                      onChange={(val) =>
+                        up((x) => {
+                          x.params = { ...(x.params ?? {}), [pd.key]: val };
+                          // A refrigerator cabinet is built in from the floor up to the ceiling.
+                          if (prod.model === 'appliance' && pd.key === 'enclosure' && val === true) x.dims = { ...dims, h: toCeiling(project.plan.ceiling, x.y) };
+                        })
+                      }
+                    />
                   ))}
               </div>
-              {prod.model === 'appliance' && params.kind === 'fridge' && params.enclosure === true && <FridgeFit dims={dims} params={params} />}
+              {prod.model === 'appliance' && params.kind === 'fridge' && params.enclosure === true && (
+                <FridgeFit dims={dims} params={params} ceilingH={toCeiling(project.plan.ceiling, it.y)} onFitCeiling={() => up((x) => (x.dims = { ...dims, h: toCeiling(project.plan.ceiling, x.y) }))} />
+              )}
             </div>
           )}
 
@@ -934,20 +947,27 @@ function PersonInspector({ h }: { h: PlacedPerson }) {
   );
 }
 
-function FridgeFit({ dims, params }: { dims: { w: number; d: number; h: number }; params: Record<string, ParamValue> }) {
+const toCeiling = (ceiling: number, y: number) => Math.round((ceiling - y) * 10) / 10;
+
+function FridgeFit({ dims, params, ceilingH, onFitCeiling }: { dims: { w: number; d: number; h: number }; params: Record<string, ParamValue>; ceilingH: number; onFitCeiling: () => void }) {
   const L = fridgeEnclosureLayout(dims.w, dims.d, dims.h, params);
   const cm = (v: number) => `${Math.round(v * 10) / 10}cm`;
-  const problems = [
-    !L.fitsW && `폭: 좌우 틈이 각 ${cm(L.sideGap)}예요 (최소 0.4cm 필요)`,
-    !L.fitsH && `높이: 상단 여유가 ${cm(L.topGap)}예요 (최소 2cm 필요)`,
-    !L.fitsD && `깊이: 냉장고가 장보다 ${cm(L.fd - dims.d)} 깊어요`,
-  ].filter(Boolean) as string[];
+  const trimmed = [L.trimmed.w > 0.05 && `폭 ${cm(L.trimmed.w)}`, L.trimmed.h > 0.05 && `높이 ${cm(L.trimmed.h)}`, L.trimmed.d > 0.05 && `깊이 ${cm(L.trimmed.d)}`].filter(Boolean);
+  const off = dims.h - ceilingH;
   return (
     <>
       <p className="note">
-        냉장고 {L.fw}×{L.fh}×{L.fd}cm · 좌우 틈 각 {cm(L.sideGap)} · {L.hasUpper ? `상부 수납칸 안쪽 높이 ${cm(L.upperClear)}` : '상부 수납칸 없음'}
+        냉장고 {cm(L.fw)} × {cm(L.fh)} × {cm(L.fd)} · 좌우 틈 각 {cm(L.sideGap)} · {L.hasUpper ? `상부 붙박이장 안쪽 높이 ${cm(L.upperClear)}` : '상부 붙박이장 공간 없음'}
       </p>
-      {problems.length > 0 && <div className="callout warn">냉장고가 장에 안 들어가요. {problems.join(' · ')}</div>}
+      {trimmed.length > 0 && <p className="note">냉장고장에 맞추느라 냉장고를 {trimmed.join(', ')} 줄였어요.</p>}
+      {Math.abs(off) > 0.5 && (
+        <div className="callout warn">
+          장 높이가 천장보다 {cm(Math.abs(off))} {off < 0 ? '낮아요' : '높아요'}.{' '}
+          <button className="btn-xs" onClick={onFitCeiling}>
+            천장까지 맞추기
+          </button>
+        </div>
+      )}
     </>
   );
 }

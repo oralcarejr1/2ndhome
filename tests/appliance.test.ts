@@ -35,19 +35,31 @@ describe('refrigerator cabinet (enclosure)', () => {
     expect(upperDoors).toHaveLength(1);
   });
 
-  it('reports clearances and when the refrigerator does not fit', () => {
-    const ok = fridgeEnclosureLayout(64, 70, 240, { fridgeW: 59.5, fridgeH: 185.3, fridgeD: 66.9 });
-    expect(ok.fitsW && ok.fitsH && ok.fitsD).toBe(true);
-    expect(ok.sideGap).toBeGreaterThanOrEqual(0.4);
-    expect(ok.hasUpper).toBe(true);
+  it('fills the space above the refrigerator with built-in storage up to the top of the cabinet', () => {
+    const L = fridgeEnclosureLayout(64, 70, 240, { fridgeW: 59.5, fridgeH: 185.3, fridgeD: 66.9 });
+    expect(L.trimmed).toEqual({ w: 0, h: 0, d: 0 });
+    expect(L.sideGap).toBeGreaterThanOrEqual(0.4);
+    expect(L.hasUpper).toBe(true);
+    // fridge + top clearance + upper floor + storage + top panel = full cabinet height
+    expect(L.fh + 2 + L.t + L.upperClear + L.t).toBeCloseTo(240);
 
-    const narrow = fridgeEnclosureLayout(62, 70, 240, { fridgeW: 59.5, fridgeH: 185.3, fridgeD: 66.9 });
-    expect(narrow.fitsW).toBe(false); // 62 − 2×1.8cm side panels is narrower than 59.5cm
-    const short = fridgeEnclosureLayout(64, 70, 186, { fridgeW: 59.5, fridgeH: 185.3, fridgeD: 66.9 });
-    expect(short.fitsH).toBe(false);
-    expect(short.hasUpper).toBe(false);
-    const shallow = fridgeEnclosureLayout(64, 60, 240, { fridgeW: 59.5, fridgeH: 185.3, fridgeD: 66.9 });
-    expect(shallow.fitsD).toBe(false);
+    const wide = build({ enclosure: true }, { w: 90, d: 70, h: 240 });
+    const doors = wide.children.filter((child) => child instanceof THREE.Mesh && child.material === cabinet && boxOf(child).min.y > 185.3 && boxOf(child).min.z > 30);
+    expect(doors).toHaveLength(2);
+  });
+
+  it('trims the refrigerator slightly when the bay is a little smaller than the real size', () => {
+    const L = fridgeEnclosureLayout(62, 65, 240, { fridgeW: 59.5, fridgeH: 185.3, fridgeD: 66.9 });
+    expect(L.fw).toBeCloseTo(62 - 2 * 1.8 - 0.8);
+    expect(L.fd).toBeCloseTo(65);
+    expect(L.trimmed.w).toBeCloseTo(1.9);
+    expect(L.trimmed.h).toBe(0);
+
+    const model = build({ enclosure: true }, { w: 62, d: 65, h: 240 });
+    const fridge = boxOf(model.children.find((child) => child instanceof THREE.Group)!);
+    const bounds = boxOf(model);
+    expect(fridge.min.x).toBeGreaterThan(bounds.min.x + 1.8);
+    expect(fridge.max.x).toBeLessThan(bounds.max.x - 1.8);
   });
 
   it('preserves existing freestanding refrigerators unless the enclosure is enabled', () => {

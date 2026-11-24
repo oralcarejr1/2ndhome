@@ -14,31 +14,34 @@ export const FRIDGE_SIDE_GAP = 0.4;
 export const FRIDGE_TOP_GAP = 2;
 const MIN_UPPER = 5;
 
-/** Where a real-size refrigerator sits inside a cabinet of w × d × h, and whether it fits. */
+/**
+ * Layout of a floor-to-ceiling refrigerator cabinet of w × d × h: the refrigerator stands in the
+ * lower bay at its real size (trimmed only as much as the bay requires), and a built-in storage
+ * cabinet fills the space above it up to the top of the cabinet.
+ */
 export function fridgeEnclosureLayout(w: number, d: number, h: number, p: Record<string, ParamValue>) {
   const t = Math.min(1.8, w / 8, d / 8, h / 12);
-  const fw = num(p, 'fridgeW', 59.5);
-  const fh = num(p, 'fridgeH', 185.3);
-  const fd = num(p, 'fridgeD', 66.9);
+  const want = { w: num(p, 'fridgeW', 59.5), h: num(p, 'fridgeH', 185.3), d: num(p, 'fridgeD', 66.9) };
+  const fw = Math.max(1, Math.min(want.w, w - 2 * t - 2 * FRIDGE_SIDE_GAP));
+  const fh = Math.max(1, Math.min(want.h, h - t - FRIDGE_TOP_GAP));
+  const fd = Math.max(1, Math.min(want.d, d));
   const sideGap = (w - 2 * t - fw) / 2;
   const shelfY = fh + FRIDGE_TOP_GAP;
   const upperClear = h - t - (shelfY + t);
   const hasUpper = upperClear >= MIN_UPPER;
-  const topGap = hasUpper ? FRIDGE_TOP_GAP : h - t - fh;
-  const eps = 1e-6;
   return {
     t,
     fw,
     fh,
     fd,
     sideGap,
-    topGap,
+    topGap: hasUpper ? FRIDGE_TOP_GAP : h - t - fh,
     shelfY,
     hasUpper,
     upperClear: hasUpper ? upperClear : 0,
-    fitsW: sideGap >= FRIDGE_SIDE_GAP - eps,
-    fitsH: topGap >= FRIDGE_TOP_GAP - eps,
-    fitsD: fd <= d + eps,
+    upperDoors: w - 2 * t > 70 ? 2 : 1,
+    /** How much the refrigerator was trimmed to fit the bay (cm, 0 when it fits as is). */
+    trimmed: { w: want.w - fw, h: want.h - fh, d: want.d - fd },
   };
 }
 
@@ -50,7 +53,7 @@ function buildAppliance(c: GenCtx) {
   const kind = str(p, 'kind', 'fridge');
   const gap = 0.4;
   if (kind === 'fridge' && bool(p, 'enclosure', false)) {
-    // Overall dimensions are the cabinet; the refrigerator keeps its own real size inside it.
+    // Overall dimensions are the whole cabinet (floor to its top); the refrigerator keeps its real size inside it.
     const L = fridgeEnclosureLayout(w, d, h, p);
     const { t } = L;
     const cabinet = c.mat('enclosure');
@@ -58,9 +61,16 @@ function buildAppliance(c: GenCtx) {
     bb(g, w / 2 - t, 0, -d / 2, w / 2, h, d / 2, cabinet);
     bb(g, -w / 2 + t, h - t, -d / 2, w / 2 - t, h, d / 2, cabinet);
     if (L.hasUpper) {
+      // Built-in storage above the refrigerator: floor panel, back panel and flush doors.
+      const top = h - t;
       bb(g, -w / 2 + t, L.shelfY, -d / 2, w / 2 - t, L.shelfY + t, d / 2, cabinet);
-      bb(g, -w / 2 + t, L.shelfY + t, -d / 2, w / 2 - t, h - t, -d / 2 + t / 3, cabinet);
-      bb(g, -w / 2 + t + 0.2, L.shelfY + t + 0.2, d / 2 - t, w / 2 - t - 0.2, h - t - 0.2, d / 2, cabinet);
+      bb(g, -w / 2 + t, L.shelfY + t, -d / 2, w / 2 - t, top, -d / 2 + t / 3, cabinet);
+      const x0 = -w / 2 + t;
+      const dw = (w - 2 * t) / L.upperDoors;
+      for (let i = 0; i < L.upperDoors; i++) {
+        const a = x0 + i * dw;
+        bb(g, a + 0.2, L.shelfY + t + 0.2, d / 2 - t, a + dw - 0.2, top - 0.2, d / 2, cabinet);
+      }
     }
     const fridge = buildAppliance({ ...c, w: L.fw, d: L.fd, h: L.fh, p: { ...p, enclosure: false } });
     // Door faces line up with the cabinet front.
@@ -208,7 +218,7 @@ export const applianceDef: ModelDef = {
       ),
     },
     { key: 'doors', label: '냉장고 도어', type: 'select', default: '2', options: opts(['1', '1도어'], ['2', '2도어(상냉장 하냉동)'], ['side', '양문형'], ['4', '4도어']), when: { kind: ['fridge'] } },
-    { key: 'enclosure', label: '냉장고장 안에 설치 (치수 = 장 바깥 크기)', type: 'bool', default: false, when: { kind: ['fridge'] } },
+    { key: 'enclosure', label: '냉장고장 + 상부 붙박이장 (치수 = 장 전체, 천장까지)', type: 'bool', default: false, when: { kind: ['fridge'] } },
     { key: 'fridgeW', label: '장 안 냉장고 폭', type: 'number', default: 59.5, min: 30, max: 150, step: 0.1, unit: 'cm', when: { kind: ['fridge'], enclosure: [true] } },
     { key: 'fridgeH', label: '장 안 냉장고 높이', type: 'number', default: 185.3, min: 50, max: 250, step: 0.1, unit: 'cm', when: { kind: ['fridge'], enclosure: [true] } },
     { key: 'fridgeD', label: '장 안 냉장고 깊이', type: 'number', default: 66.9, min: 30, max: 120, step: 0.1, unit: 'cm', when: { kind: ['fridge'], enclosure: [true] } },
