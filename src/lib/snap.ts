@@ -1,6 +1,7 @@
 import { computeIssues } from './analysis';
 import { deg2rad, itemAxes, normDeg, pointInPoly, rad2deg, snap as snapTo } from './geometry';
 import { getProduct } from '../store/store';
+import { effectiveItemDims } from './stack';
 import type { FloorPlan, PlacedItem, Product, Project, Vec2, Version } from '../types';
 
 export interface SnapGuide {
@@ -23,14 +24,7 @@ export interface SnapOptions {
   softWallClamp?: boolean;
 }
 
-export function effectiveItemDims(it: PlacedItem, prod: Product) {
-  const d = it.dims ?? prod.dims;
-  let h = d.h;
-  if (prod.model === 'table' && (it.params?.base ?? prod.params?.base) === 'standing') {
-    h = Number(it.params?.curH ?? prod.params?.curH ?? h);
-  }
-  return { w: d.w, d: d.d, h };
-}
+export { effectiveItemDims } from './stack';
 
 function nearestOrthoAngle(currentRot: number, wallRot: number): number {
   const cands = [0, 90, 180, 270].map((o) => normDeg(wallRot + o));

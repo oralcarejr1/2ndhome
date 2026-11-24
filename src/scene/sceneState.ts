@@ -25,6 +25,8 @@ interface SceneState {
   guides: SnapGuide[];
   ghost: Ghost | null;
   ghostManualRot: boolean;
+  /** name of the furniture the placed / dragged item is being put on top of */
+  stackOn: string | null;
   dragging: boolean;
   rotating: { id: string; rot: number; x: number; y: number; z: number } | null;
   measures: { a: [number, number, number]; b: [number, number, number] }[];
@@ -46,6 +48,7 @@ export const useScene = create<SceneState>((set) => ({
   guides: [],
   ghost: null,
   ghostManualRot: false,
+  stackOn: null,
   dragging: false,
   rotating: null,
   measures: [],

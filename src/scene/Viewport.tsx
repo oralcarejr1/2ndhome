@@ -9,6 +9,7 @@ import { anthro } from '../lib/ergonomics';
 import { bboxOf, deg2rad, localToWorld, normDeg, pointInPoly, rad2deg, snap as snapTo } from '../lib/geometry';
 import { setLampGlow } from '../lib/materials';
 import { effectiveItemDims, snapFloorItem } from '../lib/snap';
+import { canStack, hostBodies, pickSupport, stackDragContext, type StackDrag } from '../lib/stack';
 import { stagePalette } from '../lib/theme';
 import { resolveParams } from '../models';
 import { buildPerson } from '../models/person';
@@ -565,6 +566,8 @@ interface DragState {
   person: boolean;
   moved: boolean;
   startAngle: number;
+  /** how a single dragged piece may be put on top of other furniture */
+  stack: StackDrag | null;
 }
 
 interface PendingClick {
@@ -574,13 +577,15 @@ interface PendingClick {
 }
 
 function useRaycastHelpers() {
-  const { camera, gl, scene } = useThree();
+  const { gl, scene } = useThree();
+  const getThree = useThree((st) => st.get);
   const ray = useMemo(() => new THREE.Raycaster(), []);
   const ndc = useMemo(() => new THREE.Vector2(), []);
   const setRay = (e: PointerEvent | MouseEvent) => {
     const r = gl.domElement.getBoundingClientRect();
     ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-    ray.setFromCamera(ndc, camera);
+    // read the camera now: pointer handlers are bound once, before the view's own camera takes over
+    ray.setFromCamera(ndc, getThree().camera);
   };
   const planeHit = (y: number): Vec2 | null => {
     const pl = new THREE.Plane(new THREE.Vector3(0, 1, 0), -y * S);
@@ -593,6 +598,13 @@ function useRaycastHelpers() {
     return hits.find((h) => filter(h.object));
   };
   return { setRay, planeHit, objectsHit, ray };
+}
+
+/** Display name of a placed item (for "책상 위에 올림" hints). */
+function itemName(project: Project | null, id: string | null | undefined): string | null {
+  if (!project || !id) return null;
+  const it = activeVersion(project)?.items.find((i) => i.id === id);
+  return it ? it.label || getProduct(it.productId, project)?.name || null : null;
 }
 
 function findItemId(o: THREE.Object3D | null): string | null {
@@ -639,7 +651,7 @@ function Interaction({ project }: { project: Project; version: Version }) {
     });
     if (hit && hit.face) {
       const n = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
-      if (n.y > 0.7) return { x: hit.point.x / S, z: hit.point.z / S, y: hit.point.y / S };
+      if (n.y > 0.7) return { x: hit.point.x / S, z: hit.point.z / S, y: hit.point.y / S, id: findItemId(hit.object) };
     }
     return null;
   };
@@ -663,11 +675,18 @@ function Interaction({ project }: { project: Project; version: Version }) {
           const mount = defaultMount(prod);
           if (mount === 'wall') {
             const w = wallPlace(dims);
-            if (w) return setScene({ ghost: { ...w, valid: true }, guides: [] });
+            if (w) return setScene({ ghost: { ...w, valid: true }, guides: [], stackOn: null });
           }
           if (mount === 'surface') {
             const sp = surfacePlace([]);
-            if (sp) return setScene({ ghost: { x: sp.x, z: sp.z, y: sp.y, rot: useScene.getState().ghost?.rot ?? 0, valid: true }, guides: [] });
+            if (sp) return setScene({ ghost: { x: sp.x, z: sp.z, y: sp.y, rot: useScene.getState().ghost?.rot ?? 0, valid: true }, guides: [], stackOn: itemName(s.project, sp.id) });
+          }
+          // shelves, drawer units, boxes… land on a desk / cabinet top under the pointer (Alt: keep on the floor)
+          if (mount === 'floor' && !e.altKey && canStack(prod, dims.h)) {
+            const g = useScene.getState();
+            const hosts = hostBodies(activeVersion(s.project)!.items, (pid) => getProduct(pid, s.project));
+            const hit = pickSupport(hosts, (top) => planeHit(top), { prod, ...dims }, g.ghost?.rot ?? 0, s.project.plan.ceiling, { faceHost: !g.ghostManualRot });
+            if (hit) return setScene({ ghost: { x: hit.x, z: hit.z, y: hit.y, rot: hit.rot, valid: true }, guides: [], stackOn: hit.host.it.label || hit.host.prod.name });
           }
           const p = planeHit(0);
           if (p) {
@@ -677,7 +696,7 @@ function Interaction({ project }: { project: Project; version: Version }) {
             const sn = e.altKey
               ? { x: p[0], z: p[1], rot: prevRot, guides: [] }
               : snapFloorItem(s.project, dims, p[0], p[1], prevRot, others, s.snap, { autoOrient: manual ? 'none' : 'faceRoom' });
-            setScene({ ghost: { x: sn.x, z: sn.z, y: defaultElev(prod, s.project.plan.ceiling), rot: sn.rot, valid: true }, guides: sn.guides });
+            setScene({ ghost: { x: sn.x, z: sn.z, y: defaultElev(prod, s.project.plan.ceiling), rot: sn.rot, valid: true }, guides: sn.guides, stackOn: null });
           }
         } else {
           const p = planeHit(0);
@@ -744,7 +763,8 @@ function Interaction({ project }: { project: Project; version: Version }) {
           }
         }
         if (d.mount === 'surface' && d.ids.length === 1) {
-          const sp = surfacePlace(d.ids);
+          const sp = surfacePlace([...d.ids, ...(d.stack?.riders ?? [])]);
+          setScene({ stackOn: itemName(s.project, sp?.id) });
           const p =
             sp ??
             (() => {
@@ -765,8 +785,35 @@ function Interaction({ project }: { project: Project; version: Version }) {
           return;
         }
 
+        // A piece standing on the floor or on furniture follows the tops under it: onto a desk,
+        // cabinet or washer when it fits there, back down to the floor otherwise. Alt keeps its height.
+        const gravity = d.mount === 'floor' && !!d.stack?.gravity && d.ids.length === 1 && !e.altKey;
+        if (gravity && d.stack!.stackable) {
+          const hosts = hostBodies(v.items, (pid) => getProduct(pid, s.project), d.stack!.exclude);
+          const at = (top: number): Vec2 | null => {
+            const q = planeHit(top);
+            return q ? [q[0] + d.offset[0], q[1] + d.offset[1]] : null;
+          };
+          const hit = pickSupport(hosts, at, { prod, ...dims }, it0.rot, s.project.plan.ceiling);
+          if (hit) {
+            setScene({ guides: [], stackOn: hit.host.it.label || hit.host.prod.name });
+            s.updateItems(
+              [d.primary],
+              (it) => {
+                it.x = hit.x;
+                it.z = hit.z;
+                it.y = hit.y;
+                it.rot = hit.rot;
+              },
+              false,
+            );
+            return;
+          }
+        }
+        if (useScene.getState().stackOn) setScene({ stackOn: null });
+
         // Raycast at the item's actual height so lifted/ceiling items have zero parallax jump
-        const planeY = d.mount === 'ceiling' || it0.y > 1 ? it0.y : 0;
+        const planeY = gravity ? 0 : d.mount === 'ceiling' || item.y > 1 ? item.y : 0;
         const p = planeHit(planeY);
         if (!p) return;
         let nx = p[0] + d.offset[0];
@@ -796,7 +843,10 @@ function Interaction({ project }: { project: Project; version: Version }) {
             if (!st0) return;
             it.x = st0.x + dx;
             it.z = st0.z + dz;
-            if (d.ids.length === 1 && it.id === d.primary) it.rot = nextRot;
+            if (d.ids.length === 1 && it.id === d.primary) {
+              it.rot = nextRot;
+              if (gravity) it.y = 0;
+            }
           },
           false,
         );
@@ -849,7 +899,7 @@ function Interaction({ project }: { project: Project; version: Version }) {
       if (d) {
         drag.current = null;
         if (controlsRef.current) controlsRef.current.enabled = true;
-        setScene({ dragging: false, guides: [], rotating: null });
+        setScene({ dragging: false, guides: [], rotating: null, stackOn: null });
         el.style.cursor = '';
         if (d.person && d.moved) {
           // snap a sitting / lying person onto a seat or bed under them
@@ -924,6 +974,7 @@ function Interaction({ project }: { project: Project; version: Version }) {
       const mount = item && prod && s.project ? effectiveMount(item, prod, s.project.plan.ceiling) : 'floor';
       const planeY = mount === 'ceiling' || prim.y > 1 ? prim.y : 0;
       const hp = planeHit(planeY) ?? [prim.x, prim.z];
+      const stack = item && s.project && movable.length === 1 && (mount === 'floor' || mount === 'surface') ? stackDragContext(v.items, movable, id, (pid) => getProduct(pid, s.project)) : null;
       drag.current = {
         kind: 'move',
         ids: movable,
@@ -936,6 +987,7 @@ function Interaction({ project }: { project: Project; version: Version }) {
         person: isPerson,
         moved: false,
         startAngle: 0,
+        stack,
       };
       if (controlsRef.current) controlsRef.current.enabled = false;
     };
@@ -960,6 +1012,7 @@ function Interaction({ project }: { project: Project; version: Version }) {
         person: false,
         moved: false,
         startAngle: rad2deg(Math.atan2(p[0] - it.x, p[1] - it.z)),
+        stack: null,
       };
       if (controlsRef.current) controlsRef.current.enabled = false;
     };
@@ -1359,6 +1412,7 @@ function GhostLayer({ project }: { project: Project }) {
   const placingPerson = useStore((s) => s.placingPerson);
   const theme = useStore((s) => s.theme);
   const ghost = useScene((s) => s.ghost);
+  const stackOn = useScene((s) => s.stackOn);
   const prod = placing ? getProduct(placing.productId, project) : null;
   const tmp = useMemo(() => (prod ? ({ id: '_g', productId: prod.id, x: 0, z: 0, y: 0, rot: 0, dims: placing?.dims, params: placing?.params } as PlacedItem) : undefined), [prod, placing]);
   const profile = project.profiles.find((p) => p.id === project.activeProfileId) ?? project.profiles[0];
@@ -1370,7 +1424,7 @@ function GhostLayer({ project }: { project: Project }) {
   return (
     <group position={[ghost.x, ghost.y, ghost.z]} rotation={[0, deg2rad(ghost.rot), 0]}>
       <ItemModel item={tmp} prod={prod} ghost />
-      <Footprint w={(placing?.dims ?? prod.dims).w} d={(placing?.dims ?? prod.dims).d} color={accent} opacity={0.25} y={-ghost.y + 0.8} />
+      <Footprint w={(placing?.dims ?? prod.dims).w} d={(placing?.dims ?? prod.dims).d} color={accent} opacity={0.25} y={stackOn ? 0.8 : -ghost.y + 0.8} />
     </group>
   );
 }
