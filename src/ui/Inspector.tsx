@@ -19,6 +19,7 @@ import { catLabel } from '../catalog/categories';
 import { PRODUCTS, productSearchUrl } from '../catalog/products';
 import { nearestWall, resolveItems, sideGaps } from '../lib/analysis';
 import { anthro } from '../lib/ergonomics';
+import { topUnder } from '../lib/stack';
 import { fmtWon, itemAxes, localToWorld, normDeg, uid } from '../lib/geometry';
 import { MODELS, paramVisible, resolveMats, resolveParams } from '../models';
 import { fridgeEnclosureLayout } from '../models/fixtures';
@@ -320,14 +321,9 @@ function ItemInspector({ it }: { it: PlacedItem }) {
       up((x) => (x.y = Math.max(80, x.y || 120)));
     } else if (m === 'ceiling') up((x) => (x.y = project.plan.ceiling - dims.h));
     else {
-      const res = resolveItems(project, v).filter((r) => r.it.id !== it.id && r.prod.mount !== 'ceiling' && r.prod.model !== 'rug');
-      const under = res.filter((r) => {
-        const [lx, lz] = [it.x - r.it.x, it.z - r.it.z];
-        return Math.abs(lx) < Math.max(r.w, r.d) / 2 + 5 && Math.abs(lz) < Math.max(r.w, r.d) / 2 + 5;
-      });
-      const top = under.reduce((a, r) => Math.max(a, r.y1), 0);
-      up((x) => (x.y = top || 74));
-      notify(top ? `아래 가구 윗면(${Math.round(top)}cm)에 올렸어요` : '책상 높이(74cm)로 올렸어요');
+      const host = topUnder(v.items, it.id, (pid) => getProduct(pid, project));
+      up((x) => (x.y = host ? host.y1 : 74));
+      notify(host ? `${host.it.label || host.prod.name} 위(${Math.round(host.y1)}cm)에 올렸어요` : '아래에 가구가 없어 책상 높이(74cm)로 올렸어요');
     }
   };
 

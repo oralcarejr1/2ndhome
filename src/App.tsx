@@ -895,13 +895,24 @@ function PlaceHint() {
   const placingPerson = useStore((s) => s.placingPerson);
   const measure = useStore((s) => s.measure);
   const measures = useScene((s) => s.measures);
+  const stackOn = useScene((s) => s.stackOn);
+  const dragging = useScene((s) => s.dragging);
   const project = useStore((s) => s.project)!;
-  if (!placing && !placingPerson && !measure) return null;
+  if (!placing && !placingPerson && !measure) {
+    // dragging a piece onto a desk / cabinet
+    if (!dragging || !stackOn) return null;
+    return (
+      <div className="place-hint">
+        <Crosshair size={13} />
+        {`${stackOn} 위에 올림 · Alt 누른 채 끌면 높이 그대로`}
+      </div>
+    );
+  }
   const name = placing ? getProduct(placing.productId, project)?.name : '';
   return (
     <div className="place-hint">
       <Crosshair size={13} />
-      {placing && `${name} — 놓을 곳 클릭 · R 회전 · Shift+클릭 연속 배치`}
+      {placing && (stackOn ? `${name} — ${stackOn} 위에 놓기 · 클릭 · Alt 바닥에 놓기 · R 회전` : `${name} — 놓을 곳 클릭 · R 회전 · Shift+클릭 연속 배치`)}
       {placingPerson && '사람을 세울 곳을 클릭'}
       {measure && '두 점을 클릭해 거리 측정'}
       {measure && measures.length > 0 && <button onClick={() => useScene.getState().set({ measures: [] })}>지우기</button>}
@@ -1000,6 +1011,7 @@ function ShotModal() {
 function Help({ onClose }: { onClose: () => void }) {
   const shortcuts: [string, string][] = [
     ['클릭 → 드래그 / 파란 고리', '가구 선택 후 이동 · 회전 (벽 자동 밀착, Alt 스냅 해제)'],
+    ['책상·수납장 위로 끌기', '위에 올리기 — 책상을 옮기면 위의 물건도 함께 (Alt: 높이 그대로 · 아래로 밀어 넣기)'],
     ['미선택 영역 드래그 / 우클릭', '3D 카메라 회전 · 평행 이동'],
     ['1인칭 바닥·가구 클릭', '바닥으로 걸어가기 · 소파/침대 앉기·눕기'],
     ['R / Shift+R', '선택·배치 가구 90° 회전'],

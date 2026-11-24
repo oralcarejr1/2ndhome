@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import { ALL_BUILTIN, defaultElev, defaultMount } from '../catalog/products';
 import { blankProject, sampleProject } from '../catalog/seed';
 import { localToWorld, uid } from '../lib/geometry';
+import { applyCarry, planCarry } from '../lib/stack';
 import { useScene } from '../scene/sceneState';
 import type { AppMode, PersonProfile, PlacedItem, PlacedPerson, Pose, Product, Project, Version, ViewMode } from '../types';
 import { merge3, sameContent } from './merge';
@@ -638,11 +639,11 @@ export const useStore = create<State>((set, get) => {
       } else set({ selection: ids, panel: ids.length ? 'inspect' : get().panel });
     },
     startPlacing: (productId, extra) => {
-      useScene.getState().set({ ghostManualRot: false, ghost: null, guides: [] });
+      useScene.getState().set({ ghostManualRot: false, ghost: null, guides: [], stackOn: null });
       set({ placing: { productId, ...extra }, placingPerson: null, measure: false, mode: 'layout' });
     },
     cancelPlacing: () => {
-      useScene.getState().set({ ghostManualRot: false, ghost: null, guides: [] });
+      useScene.getState().set({ ghostManualRot: false, ghost: null, guides: [], stackOn: null });
       set({ placing: null, placingPerson: null });
     },
     addItem: (productId, x, z, extra = {}) => {
@@ -660,9 +661,13 @@ export const useStore = create<State>((set, get) => {
     },
     updateItems: (ids, fn, history = true) => {
       const s = new Set(ids);
-      get().mutateVersion((v) => {
+      get().mutateVersion((v, p) => {
+        // things standing on a moved desk/cabinet (monitor, lamp, shelf…) move, turn and rise with it
+        const lookup = (pid: string) => getProduct(pid, p);
+        const carry = planCarry(v.items, s, lookup);
         for (const it of v.items) if (s.has(it.id)) fn(it);
         for (const h of v.people) if (s.has(h.id)) fn(h as unknown as PlacedItem);
+        applyCarry(v.items, carry, lookup);
       }, history);
     },
     removeSelected: () => {

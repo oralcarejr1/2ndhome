@@ -20,6 +20,7 @@ import { computeIssues, doorSwingPoly, resolveItems, type Issue } from '../lib/a
 import { add, bboxOf, closestOnSeg, dist, localToWorld, mul, norm, normDeg, polyArea, polyCentroid, pyeong, rad2deg, snap, sub, uid, wallPoly } from '../lib/geometry';
 import { mirrorProject, type MirrorAxis } from '../lib/mirror';
 import { effectiveItemDims, snapFloorItem, type SnapGuide } from '../lib/snap';
+import { canStack, hostBodies, pickSupport, stackDragContext, type StackDrag } from '../lib/stack';
 import { useImageUrl } from '../scene/ItemMesh';
 import { useScene } from '../scene/sceneState';
 import { compressImage, storeImage } from '../store/persistence';
@@ -223,7 +224,8 @@ export function PlanEditor({
     return out;
   };
 
-  const drag = useRef<null | { kind: string; id?: string; idx?: number; start: Vec2; orig: unknown; moved: boolean }>(null);
+  const drag = useRef<null | { kind: string; id?: string; idx?: number; start: Vec2; orig: unknown; moved: boolean; stack?: StackDrag | null }>(null);
+  const lookup = (pid: string) => getProduct(pid, project);
 
   const onDown = (e: React.PointerEvent) => {
     (e.target as Element).setPointerCapture?.(e.pointerId);
@@ -274,7 +276,8 @@ export function PlanEditor({
       else if (!st.selection.includes(id)) st.select(groupIds);
       const ids = (useStore.getState().selection.includes(id) ? useStore.getState().selection : groupIds).filter((x) => !v.items.find((i) => i.id === x)?.locked);
       const orig = new Map(ids.map((x) => [x, { ...(v.items.find((i) => i.id === x) ?? { x: 0, z: 0, rot: 0 }) }]));
-      drag.current = { kind: 'furn', id, start: p, orig, moved: false };
+      const stack = ids.length === 1 && ids[0] === id ? stackDragContext(v.items, ids, id, lookup) : null;
+      drag.current = { kind: 'furn', id, start: p, orig, moved: false, stack };
       return;
     }
     if (tool === 'pan' || e.button === 1 || ((tool === 'select' || tool === 'furn') && !t)) {
@@ -360,11 +363,20 @@ export function PlanEditor({
           const dims = st.placing.dims ?? prod.dims;
           const prevRot = useScene.getState().ghost?.rot ?? 0;
           const manual = useScene.getState().ghostManualRot;
+          // over a desk / cabinet: put it on top (Alt: keep it on the floor)
+          if (!e.altKey && canStack(prod, dims.h)) {
+            const hit = pickSupport(hostBodies(v.items, lookup), () => p, { prod, ...dims }, prevRot, plan.ceiling, { faceHost: !manual });
+            if (hit) {
+              useScene.getState().set({ ghost: { x: hit.x, z: hit.z, y: hit.y, rot: hit.rot, valid: true }, stackOn: hit.host.it.label || hit.host.prod.name });
+              setGuides2d([]);
+              return;
+            }
+          }
           const others = v.items.filter((i) => !i.hidden);
           const sn = e.altKey
             ? { x: p[0], z: p[1], rot: prevRot, guides: [] }
             : snapFloorItem(project, dims, p[0], p[1], prevRot, others, st.snap, { autoOrient: manual ? 'none' : 'faceRoom' });
-          useScene.getState().set({ ghost: { x: sn.x, z: sn.z, y: defaultElev(prod, plan.ceiling), rot: sn.rot, valid: true } });
+          useScene.getState().set({ ghost: { x: sn.x, z: sn.z, y: defaultElev(prod, plan.ceiling), rot: sn.rot, valid: true }, stackOn: null });
           setGuides2d(sn.guides);
         }
       } else {
@@ -408,6 +420,28 @@ export function PlanEditor({
         const rawZ = q0.z + (p[1] - d.start[1]);
         const item = v.items.find((i) => i.id === d.id);
         const prod = item ? getProduct(item.productId, project) : null;
+        // on the floor or on furniture: follow the tops under it (desk, cabinet…) or drop back to the floor
+        const gravity = !!d.stack?.gravity && !e.altKey;
+        if (item && prod && gravity && d.stack!.stackable) {
+          const dims = effectiveItemDims(item, prod);
+          const hit = pickSupport(hostBodies(v.items, lookup, d.stack!.exclude), () => [rawX, rawZ], { prod, ...dims }, q0.rot, plan.ceiling);
+          if (hit) {
+            setGuides2d([]);
+            useScene.getState().set({ stackOn: hit.host.it.label || hit.host.prod.name });
+            st.updateItems(
+              [d.id],
+              (it) => {
+                it.x = hit.x;
+                it.z = hit.z;
+                it.y = hit.y;
+                it.rot = hit.rot;
+              },
+              false,
+            );
+            return;
+          }
+        }
+        if (useScene.getState().stackOn) useScene.getState().set({ stackOn: null });
         if (item && prod && !e.altKey) {
           const dims = effectiveItemDims(item, prod);
           const others = v.items.filter((i) => i.id !== d.id && !i.hidden);
@@ -419,6 +453,7 @@ export function PlanEditor({
               it.x = sn.x;
               it.z = sn.z;
               it.rot = sn.rot;
+              if (gravity) it.y = 0;
             },
             false,
           );
@@ -494,7 +529,7 @@ export function PlanEditor({
   };
 
   const onUp = () => {
-    if (drag.current?.moved) useScene.getState().set({ dragging: false });
+    if (drag.current?.moved) useScene.getState().set({ dragging: false, stackOn: null });
     drag.current = null;
     setGuides2d([]);
     setRotReadout(null);

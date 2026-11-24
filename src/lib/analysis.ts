@@ -217,6 +217,8 @@ export function computeIssues(project: Project, v: Version): Map<string, Issue[]
         if (B === A || PASS_THROUGH_MODELS.has(B.prod.model) || isChairLike(B)) continue;
         if (['lighting', 'plant', 'decor'].includes(B.prod.category)) continue;
         if (B.y0 > 150 || B.prod.mount === 'ceiling') continue;
+        // the desk or cabinet it stands on is below the drawers/doors, not in their way
+        if (B.y1 <= A.y0 + 1) continue;
         if (polyOverlap(cz.poly, B.poly) > 3) {
           push(A.it.id, { level: 'warn', msg: `${sideKo(cz.side)} 사용 공간(${cz.depth}cm)에 ${B.it.label || B.prod.name}` });
         }
